@@ -1,0 +1,169 @@
+/**
+* Library of functions for moving robot
+*/
+
+target C {
+    platform: {
+        name: "rp2040",
+        board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import GyroAngle from "lib/IMU.lf"
+import Encoders from "lib/Encoders.lf"
+import Accelerometer from "lib/IMU.lf"
+// import Tilt from "lib/Tilt.lf"
+
+
+preamble {=
+    #include <math.h>
+=}
+
+// returns distance travelled in meters.
+reactor AngleToDistance {
+    input angle: int32_t
+    output distance: float
+
+    reaction(angle) -> distance {=
+        // arc length = theta * r, where theta is in radians
+        lf_set(distance, (float) angle->value * ((float) M_PI / 180.0f) * (0.03175f / 2.0f));
+    =}
+}
+
+reactor RobotMovement {
+    // distances
+    reset state temp_dist: float = 0
+    input l_dist: float
+    input r_dist: float
+    input target_dist: float
+
+    // angles
+    reset state temp_angle: float = 0
+    input yaw: float     
+    input pitch: float
+    input roll: float
+    input target_angle: float
+
+    // outputs for motor
+    output left: float
+    output right: float
+
+    // Generic move function.
+    // We set a target distance to travel to, and the sign of this distance corresponds to whether the robot moves forward or backward.
+    method move (l_dist, r_dist, yaw, target_dist) {=
+        float speed = 0.1f;
+        if (target_dist < 0) {
+            speed = -0.1f;
+        }
+
+        lf_set(left, speed);
+        lf_set(right, speed);
+        
+        float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+        
+        if (fabs(self->temp_dist - lr_avg_dist) >= fabs(target_dist)) {
+          lf_set(left, 0.0f);
+          lf_set(right, 0.0f);
+
+          // get snapshot of angle turned
+          self->temp_angle = yaw->value;
+        }
+    =}
+
+    // Generic turn function
+    // We set target angle to turn to, if angle is positive we turn right relative to robot direction and if negative, turn left.
+    method turn (l_dist, r_dist, yaw, target_angle) {=
+        float speed = 0.1f;
+        if (target_angle < 0) {
+            speed = -0.1f;
+        }
+
+        lf_set(left, speed);
+        lf_set(right, -speed); 
+
+        if (fabs(self->temp_angle - yaw->value) >= target_angle) {
+            lf_set(left, 0.0f);
+            lf_set(right, 0.0f);
+
+            float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+            self->temp_dist = lr_avg_dist;
+        }
+    =}
+}
+
+// reactor Robot {
+//     reset state temp_dist: float = 0
+//     input l_dist: float
+//     input r_dist: float
+
+//     // angles
+//     reset state temp_angle: float = 0
+//     input yaw: float     
+//     input pitch: float
+//     input roll: float
+
+//     // outputs for motor
+//     output left: float
+//     output right: float
+
+//     // outputs for display
+//     output l0: string
+//     output l1: string
+//     output l2: string
+//     output l3: string
+// }
+
+main reactor {
+    timer t(0, 50 msec) // need this to be kind of frequent to avoid delay in 
+    
+    r = new RobotMovement()
+    d = new Display()
+
+    // motor w/ feedback
+    motor = new MotorsWithFeedback()
+
+    // gets distance traveled
+    encoder = new Encoders()
+    c1 = new AngleToDistance()
+    c2 = new AngleToDistance()
+
+    // gets yaw measurement
+    gyro = new GyroAngle()
+
+    // gets roll measurement
+    a = new Accelerometer()
+
+    // motor w/ feedback inputs
+    r.left -> motor.left_speed
+    r.right -> motor.right_speed
+    encoder.left -> motor.left
+    encoder.right -> motor.right
+
+    // get distance traveled and put in robot's l_dist and r_dist
+    encoder.left -> c1.angle
+    encoder.right -> c2.angle
+    c1.distance -> r.l_dist
+    c2.distance -> r.r_dist
+
+    // get pitch, roll, yaw
+    a.x, a.y, a.z -> tilt.x, tilt.y, tilt.z
+    tilt.pitch -> r.pitch
+    tilt.roll -> r.roll
+    gyro.z -> r.yaw
+
+    // robot display
+    r.l0, r.l1, r.l2, r.l3 -> d.line0, d.line1, d.line2, d.line3
+
+    reaction(startup) {=
+        r.move();
+    =}
+
+    reaction(t) -> a.trigger, encoder.trigger, gyro.trigger {=
+    lf_set(a.trigger, true);
+    lf_set(encoder.trigger, true);
+    lf_set(gyro.trigger, true);
+    =}
+}
