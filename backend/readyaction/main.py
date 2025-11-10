@@ -20,6 +20,9 @@ client = OpenAI(
     base_url="http://localhost:8080/v1",
     api_key=""
 )
+SYSTEM_PROMPT = """You are a vision system for a robot. Analyze the image and provide a brief description of what you see.
+Focus on objects, people, obstacles, and any relevant environmental details that would help the robot navigate or interact with its surroundings."""
+USER_PROMPT = "Describe what you see in this image in one sentence."
 
 @app.get("/")
 async def root(request: Request):
@@ -34,11 +37,15 @@ async def analyze_image(file: UploadFile = File(...)):
         model="gpt-4-vision-preview",
         messages=[
             {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": "Describe what you see in this image in one sentence."
+                        "text": USER_PROMPT
                     },
                     {
                         "type": "image_url",
