@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VLM Inference Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            width: 100%;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto 12px;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .status {
+            text-align: center;
+            padding: 8px;
+            margin-bottom: 12px;
+            border-radius: 5px;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        .status.active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.inactive {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .output-container {
+            margin-top: 12px;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #555;
+            font-size: 14px;
+        }
+        textarea {
+            width: 100%;
+            height: 80px;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: monospace;
+            resize: vertical;
+        }
+        .controls {
+            text-align: center;
+            margin-top: 12px;
+        }
+        button {
+            padding: 10px 24px;
+            font-size: 14px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 0 6px;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+        button.start {
+            background-color: #28a745;
+            color: white;
+        }
+        button.start:hover {
+            background-color: #218838;
+        }
+        button.stop {
+            background-color: #dc3545;
+            color: white;
+        }
+        button.stop:hover {
+            background-color: #c82333;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        .info {
+            text-align: center;
+            margin-top: 12px;
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 VLM Inference Demo</h1>
+        
+        <div class="status inactive" id="status">
+            Camera Inactive
+        </div>
+        
+        <div class="video-container">
+            <video id="webcam" autoplay playsinline></video>
+        </div>
+        
+        <div class="controls">
+            <button class="start" id="startBtn" onclick="startCapture()">Start Camera</button>
+            <button class="stop" id="stopBtn" onclick="stopCapture()" disabled>Stop Camera</button>
+        </div>
+        
+        <div class="output-container">
+            <label for="output">VLM Output:</label>
+            <textarea id="output" readonly placeholder="VLM analysis will appear here..."></textarea>
+        </div>
+        
+        <div class="info">
+            📸 Capturing and analyzing frames every 500ms
+        </div>
+    </div>
+    <script>
+        let stream = null;
+        let intervalId = null;
+        const video = document.getElementById('webcam');
+        const output = document.getElementById('output');
+        const status = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        async function startCapture() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 } 
+                });
+                video.srcObject = stream;
+                status.textContent = 'Camera Active - Analyzing...';
+                status.className = 'status active';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                intervalId = setInterval(captureAndAnalyze, 500);
+            } catch (error) {
+                console.error('Error accessing webcam:', error);
+                output.value = 'Error: Unable to access webcam. Please grant camera permissions.';
+                status.textContent = 'Error accessing camera';
+                status.className = 'status inactive';
+            }
+        }
+
+        function stopCapture() {
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            status.textContent = 'Camera Inactive';
+            status.className = 'status inactive';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            video.srcObject = null;
+        }
+
+        async function captureAndAnalyze() {
+            try {
+                // Create a canvas to capture the current video frame
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0);
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+                const formData = new FormData();
+                formData.append('file', blob, 'frame.jpg');
+                const response = await fetch('/api/v1/actions', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if (result.success) {
+                    const timestamp = new Date().toLocaleTimeString();
+                    output.value = `[${timestamp}] ${result.caption}`;
+                } else {
+                    output.value = `Error: ${result.error}`;
+                }
+            } catch (error) {
+                console.error('Error analyzing frame:', error);
+                output.value = `Error: ${error.message}`;
+            }
+        }
+        window.addEventListener('beforeunload', stopCapture);
+    </script>
+</body>
+</html>
+
