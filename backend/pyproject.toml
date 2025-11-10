@@ -1,0 +1,7 @@
+[project]
+name = "readyaction"
+version = "0.1.0"
+description = "VLM inference server outputting actions given images"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
