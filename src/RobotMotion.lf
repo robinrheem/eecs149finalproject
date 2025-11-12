@@ -1,169 +1,146 @@
 /**
-* Library of functions for moving robot
-*/
+  * Robot Motion Main Robot Control
+  */
 
 target C {
-    platform: {
-        name: "rp2040",
-        board: "pololu_3pi_2040_robot"
-    },
-    single-threaded: true
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
 }
 
 import Display from "lib/Display.lf"
-import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import Motors from "lib/Motors.lf"
 import GyroAngle from "lib/IMU.lf"
 import Encoders from "lib/Encoders.lf"
-import Accelerometer from "lib/IMU.lf"
-// import Tilt from "lib/Tilt.lf"
-
+// import EdgeSensor from "EdgeSensor.lf"
 
 preamble {=
-    #include <math.h>
+  #include <math.h>
 =}
 
 // returns distance travelled in meters.
 reactor AngleToDistance {
-    input angle: int32_t
-    output distance: float
+  input angle: int32_t
+  output distance: float
 
-    reaction(angle) -> distance {=
-        // arc length = theta * r, where theta is in radians
-        lf_set(distance, (float) angle->value * ((float) M_PI / 180.0f) * (0.03175f / 2.0f));
-    =}
+  reaction(angle) -> distance {=
+      // arc length = theta * r, where theta is in radians
+      lf_set(distance, (float) angle->value * ((float) M_PI / 180.0f) * (0.03175f / 2.0f));
+  =}
 }
 
-reactor RobotMovement {
-    // distances
-    reset state temp_dist: float = 0
-    input l_dist: float
-    input r_dist: float
-    input target_dist: float
+reactor Robot {
+  motor = new Motors()
 
-    // angles
-    reset state temp_angle: float = 0
-    input yaw: float     
-    input pitch: float
-    input roll: float
-    input target_angle: float
+  reset state temp_dist: float = 0
+  input l_dist: float
+  input r_dist: float
 
-    // outputs for motor
-    output left: float
-    output right: float
+  reset state temp_angle: float = 0
+  input yaw: float     // Yaw angle
 
-    // Generic move function.
-    // We set a target distance to travel to, and the sign of this distance corresponds to whether the robot moves forward or backward.
-    method move (l_dist, r_dist, yaw, target_dist) {=
-        float speed = 0.1f;
-        if (target_dist < 0) {
-            speed = -0.1f;
-        }
+  output l0: string
+  output l1: string
+  output l2: string
+  output l3: string
 
-        lf_set(left, speed);
-        lf_set(right, speed);
-        
+  initial mode OBSERVING {
+    // is the goal target in my vision?
+    // if yes, change mode to pathfind
+    // if no, search
+  }
+
+  mode SEARCH {
+    // different naive implementations
+    // 1. random walk
+    // 2. spiral
+
+    // lets assume random walk for now
+    // start in scan mode, ask VLM if target is in view: if yes, switch to pathfind
+    // else: turn a random angle,
+    // then move forward a random angle
+    // if obstacle (object that is not target) in view, back up and turn? or maybe use bump sensor?
+    // after, go back to OBSERVING
+  }
+
+  mode PATHFIND {
+    // target object has been found, start travelling toward it
+    // keep object in center as much as possible
+    // if target is behind an object, try to navigate around it
+    // maybe keep some bias direction so the robot knows to eventually travel to it after avoiding
+
+  }
+
+    mode BACKUP {
+      reaction(l_dist, r_dist) yaw -> reset(BACKUP_TURN), l3, motor.right_power, motor.left_power {=
+        lf_set(l3, "backing up");
+
+        lf_set(motor.left_power, -0.1f);
+        lf_set(motor.right_power, -0.1f);
+
         float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
-        
-        if (fabs(self->temp_dist - lr_avg_dist) >= fabs(target_dist)) {
-          lf_set(left, 0.0f);
-          lf_set(right, 0.0f);
+
+        if (fabs(self->temp_dist - lr_avg_dist) >= 0.1f) {
+          lf_set(l3, "stop");
+          lf_set(motor.left_power, 0.0f);
+          lf_set(motor.right_power, 0.0f);
 
           // get snapshot of angle turned
           self->temp_angle = yaw->value;
+
+          lf_set_mode(BACKUP_TURN);
         }
-    =}
+      =}
+    }
 
-    // Generic turn function
-    // We set target angle to turn to, if angle is positive we turn right relative to robot direction and if negative, turn left.
-    method turn (l_dist, r_dist, yaw, target_angle) {=
-        float speed = 0.1f;
-        if (target_angle < 0) {
-            speed = -0.1f;
+    mode BACKUP_TURN {
+      reaction(yaw) l_dist, r_dist -> reset(DRIVING), l3, motor.left_power, motor.right_power {=
+        lf_set(motor.left_power, -0.1f);
+
+        if (fabs(self->temp_angle - yaw->value) >= 25) {
+          lf_set(l3, "stop turning");
+
+          lf_set(motor.left_power, 0.0f);
+
+          float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+          self->temp_dist = lr_avg_dist;
+
+          lf_set_mode(DRIVING);
         }
-
-        lf_set(left, speed);
-        lf_set(right, -speed); 
-
-        if (fabs(self->temp_angle - yaw->value) >= target_angle) {
-            lf_set(left, 0.0f);
-            lf_set(right, 0.0f);
-
-            float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
-            self->temp_dist = lr_avg_dist;
-        }
-    =}
-}
-
-// reactor Robot {
-//     reset state temp_dist: float = 0
-//     input l_dist: float
-//     input r_dist: float
-
-//     // angles
-//     reset state temp_angle: float = 0
-//     input yaw: float     
-//     input pitch: float
-//     input roll: float
-
-//     // outputs for motor
-//     output left: float
-//     output right: float
-
-//     // outputs for display
-//     output l0: string
-//     output l1: string
-//     output l2: string
-//     output l3: string
-// }
-
+      =}
+    }
+  }
+  
 main reactor {
-    timer t(0, 50 msec) // need this to be kind of frequent to avoid delay in 
-    
-    r = new RobotMovement()
-    d = new Display()
+  timer t(0, 20 msec) // need this to be kind of frequent to avoid delay in 
+  
+  r = new Robot()
+  d = new Display()
 
-    // motor w/ feedback
-    motor = new MotorsWithFeedback()
+  // gets distance traveled
+  encoder = new Encoders()
+  c1 = new AngleToDistance()
+  c2 = new AngleToDistance()
 
-    // gets distance traveled
-    encoder = new Encoders()
-    c1 = new AngleToDistance()
-    c2 = new AngleToDistance()
+  // gets yaw measurement
+  g = new GyroAngle()
 
-    // gets yaw measurement
-    gyro = new GyroAngle()
+  encoder.left -> c1.angle
+  encoder.right -> c2.angle
+  c1.distance -> r.l_dist
+  c2.distance -> r.r_dist
 
-    // gets roll measurement
-    a = new Accelerometer()
+  g.z -> r.yaw
 
-    // motor w/ feedback inputs
-    r.left -> motor.left_speed
-    r.right -> motor.right_speed
-    encoder.left -> motor.left
-    encoder.right -> motor.right
+  r.l0 -> d.line0
+  r.l1 -> d.line1
+  r.l2 -> d.line2
+  r.l3 -> d.line3
 
-    // get distance traveled and put in robot's l_dist and r_dist
-    encoder.left -> c1.angle
-    encoder.right -> c2.angle
-    c1.distance -> r.l_dist
-    c2.distance -> r.r_dist
-
-    // get pitch, roll, yaw
-    a.x, a.y, a.z -> tilt.x, tilt.y, tilt.z
-    tilt.pitch -> r.pitch
-    tilt.roll -> r.roll
-    gyro.z -> r.yaw
-
-    // robot display
-    r.l0, r.l1, r.l2, r.l3 -> d.line0, d.line1, d.line2, d.line3
-
-    reaction(startup) {=
-        r.move();
-    =}
-
-    reaction(t) -> a.trigger, encoder.trigger, gyro.trigger {=
-    lf_set(a.trigger, true);
+  reaction(t) -> encoder.trigger, g.trigger {=
     lf_set(encoder.trigger, true);
-    lf_set(gyro.trigger, true);
-    =}
+    lf_set(g.trigger, true);
+  =}
 }
