@@ -63,41 +63,34 @@ reactor Robot {
 
   // state goal_found: bool = false
 
+  reaction(startup) -> l0 {=
+    lf_set(l0, "INIT");
+  =}
+
   initial mode DRIVING {
     reaction (yaw) -> l0, l2, l3, left, right {=
       lf_set(l0, "DRIVING");
 
-      // float speed_adjustment = fabs(y * 0.02);
-      if (yaw->value < -2.0f) {
-        // self->l_speed += speed_adjustment;
-        // self->r_speed -= speed_adjustment;        
-        
-        static char buf[17];
-        snprintf(buf, 17, "ls: %.4f", yaw->value);
-        lf_set(l2, buf);
+      float angle_diff = yaw->value;
+      float speed_adjustment = fabs(angle_diff * 0.02);
+      if (angle_diff < -2.0f) {
+        self->l_speed += speed_adjustment;
+        self->r_speed -= speed_adjustment;        
 
-        lf_set(left, 0.1f);
-        lf_set(right, 0.07f);
+        lf_set(left, self->l_speed);
+        lf_set(right, self->r_speed);
 
         lf_set(l3, "adjust left");
-      } else if (yaw->value > 2.0f) {
-        // self->l_speed -= speed_adjustment;
-        // self->r_speed += speed_adjustment;
+      } else if (angle_diff > 2.0f) {
+        self->l_speed -= speed_adjustment;
+        self->r_speed += speed_adjustment;
 
-        static char buf[17];
-        snprintf(buf, 17, "ls: %.4f", yaw->value);
-        lf_set(l2, buf);
-
-        lf_set(left, 0.07f);
-        lf_set(right, 0.1f);
+        lf_set(left, self->l_speed);
+        lf_set(right, self->r_speed);
         lf_set(l3, "adjust right");
       } else {
-        lf_set(left, 0.1f);
-        lf_set(right, 0.1f);
-
-        static char buf[17];
-        snprintf(buf, 17, "ls: %.4f", yaw->value);
-        lf_set(l2, buf);
+        lf_set(left, self->l_speed);
+        lf_set(right, self->r_speed);
 
         lf_set(l3, "ok");
       }
@@ -108,7 +101,7 @@ reactor Robot {
 
       float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
 
-      if (fabs(self->temp_dist - lr_avg_dist) >= 0.5f) {
+      if (fabs(self->temp_dist - lr_avg_dist) >= 10.0f) {
         lf_set(l0, "stop");
         lf_set(left, 0.0f);
         lf_set(right, 0.0f);
@@ -249,6 +242,12 @@ main reactor {
   c2.distance -> robot.r_dist
 
   gyro.z -> robot.yaw
+
+  // motor w/ feedback inputs
+  robot.left -> motor.left_speed
+  robot.right -> motor.right_speed
+  encoder.left -> motor.left
+  encoder.right -> motor.right
 
   robot.l0 -> d.line0
   robot.l1 -> d.line1
