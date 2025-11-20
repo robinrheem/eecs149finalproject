@@ -12,6 +12,7 @@ target C {
 
 import Display from "lib/Display.lf"
 import Motors from "lib/Motors.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
 import GyroAngle from "lib/IMU.lf"
 import Encoders from "lib/Encoders.lf"
 // import EdgeSensor from "EdgeSensor.lf"
@@ -41,8 +42,6 @@ reactor RandomFloat {
 }
 
 reactor Robot {
-  motor = new Motors()
-
   reset state temp_dist: float = 0
   input l_dist: float
   input r_dist: float
@@ -50,102 +49,190 @@ reactor Robot {
   reset state temp_angle: float = 0
   input yaw: float     // Yaw angle
 
+  reset state l_speed: float = 0.1
+  reset state r_speed: float = 0.1
+
+  // outputs for motor
+  output left: float
+  output right: float
+
   output l0: string
   output l1: string
   output l2: string
   output l3: string
 
-  state goal_found: bool = False
+  // state goal_found: bool = false
 
-  initial mode OBSERVING {
-    // is the goal target in my vision?
-    reaction(startup) {=
-      // send camera data to VLM
-      // get output and set goal_found to status
-    =}
+  initial mode DRIVING {
+    reaction (yaw) -> l0, l2, l3, left, right {=
+      lf_set(l0, "DRIVING");
 
-    // if yes, change mode to pathfind, else search
-    reaction (goal_found) -> reset(SEARCH), reset(PATHFIND) {=
-      if (goal_found) {
-        lf_set_mode(PATHFIND);
+      // float speed_adjustment = fabs(y * 0.02);
+      if (yaw->value < -2.0f) {
+        // self->l_speed += speed_adjustment;
+        // self->r_speed -= speed_adjustment;        
+        
+        static char buf[17];
+        snprintf(buf, 17, "ls: %.4f", yaw->value);
+        lf_set(l2, buf);
+
+        lf_set(left, 0.1f);
+        lf_set(right, 0.07f);
+
+        lf_set(l3, "adjust left");
+      } else if (yaw->value > 2.0f) {
+        // self->l_speed -= speed_adjustment;
+        // self->r_speed += speed_adjustment;
+
+        static char buf[17];
+        snprintf(buf, 17, "ls: %.4f", yaw->value);
+        lf_set(l2, buf);
+
+        lf_set(left, 0.07f);
+        lf_set(right, 0.1f);
+        lf_set(l3, "adjust right");
       } else {
-        lf_set_mode(SEARCH);
+        lf_set(left, 0.1f);
+        lf_set(right, 0.1f);
+
+        static char buf[17];
+        snprintf(buf, 17, "ls: %.4f", yaw->value);
+        lf_set(l2, buf);
+
+        lf_set(l3, "ok");
       }
     =}
-  }
 
-  mode SEARCH {
-    // different naive implementations
-    // 1. random walk
-    // 2. spiral
-
-    // lets assume random walk for now
-    // start in scan mode, ask VLM if target is in view: if yes, switch to pathfind
-    // else: turn a random angle,
-    // then move forward a random angle
-    // if obstacle (object that is not target) in view, back up and turn? or maybe use bump sensor?
-    // after, go back to OBSERVING
-    reaction (startup) -> reset(TURN_RANDOM) {=
-      lf_set_mode(TURN_RANDOM);
-    =}
-  }
-
-  mode TURN_RANDOM {
-    reaction(yaw) l_dist, r_dist -> reset(MOVE_FORWARD_RANDOM), motor.left_power, motor.right_power {=
-      lf_set(motor.left_power, -0.05f);
-      lf_set(motor.right_power, 0.05f);
-
-      float random_angle = 25 // TODO: replace placeholder
-
-      if (fabs(self->temp_angle - yaw->value) >= random_angle) {
-        lf_set(motor.left_power, 0.0f);
-        lf_set(motor.right_power, 0.0f);
-
-        // TODO: maybe check if there is an object in front?
-        // if yes then keep rotating ? or until it leaves the camera periphery?
-
-        float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
-        self->temp_dist = lr_avg_dist;
-
-        lf_set_mode(MOVE_FORWARD_RANDOM);
-      }
-    =}
-  }
-
-  mode MOVE_FORWARD_RANDOM {
-    reaction(l_dist, r_dist) yaw -> reset(OBSERVING), motor.left_power, motor.right_power {=
-      lf_set(motor.left_power, 0.1f);
-      lf_set(motor.right_power, 0.1f);
+    reaction(l_dist, r_dist) yaw -> reset(TURNING), l0, left, right {=
+      lf_set(l0, "DRIVING");
 
       float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
 
-      float random_dist = 0.5f;
-
-      if (fabs(self->temp_dist - lr_avg_dist) >= random_dist) {
-        lf_set(motor.left_power, 0.0f);
-        lf_set(motor.right_power, 0.0f);
+      if (fabs(self->temp_dist - lr_avg_dist) >= 0.5f) {
+        lf_set(l0, "stop");
+        lf_set(left, 0.0f);
+        lf_set(right, 0.0f);
 
         self->temp_angle = yaw->value;
 
-        lf_set_mode(OBSERVING);
+        lf_set_mode(TURNING);
       }
     =}
   }
 
-  mode PATHFIND {
-    // target object has been found, start travelling toward it
-    // keep object in center as much as possible
-    // if target is behind an object, try to navigate around it
-    // maybe keep some bias direction so the robot knows to eventually travel to it after avoiding
+  mode TURNING {
+    reaction(yaw) l_dist, r_dist -> reset(DRIVING), l0, left, right {=
+      lf_set(l0, "TURNING");
 
-    // should camera observation, VLM request and navigation be in parallel?
+      lf_set(left, 0.0f);
+      lf_set(right, self->r_speed);
+
+      if (fabs(self->temp_angle - yaw->value) >= 90) {
+        lf_set(l0, "stop turning");
+
+        lf_set(left, 0.0f);
+        lf_set(right, 0.0f);
+
+        float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+        self->temp_dist = lr_avg_dist;
+        self->temp_angle = yaw->value;
+
+        lf_set_mode(DRIVING);
+
+      }
+    =}
   }
+
+  // initial mode OBSERVING {
+  //   // is the goal target in my vision?
+  //   reaction(startup) {=
+  //     // send camera data to VLM
+  //     // get output and set goal_found to status
+  //   =}
+
+  //   // if yes, change mode to pathfind, else search
+  //   reaction (goal_found) -> reset(SEARCH), reset(PATHFIND) {=
+  //     if (goal_found) {
+  //       lf_set_mode(PATHFIND);
+  //     } else {
+  //       lf_set_mode(SEARCH);
+  //     }
+  //   =}
+  // }
+
+  // mode SEARCH {
+  //   // different naive implementations
+  //   // 1. random walk
+  //   // 2. spiral
+
+  //   // lets assume random walk for now
+  //   // start in scan mode, ask VLM if target is in view: if yes, switch to pathfind
+  //   // else: turn a random angle,
+  //   // then move forward a random angle
+  //   // if obstacle (object that is not target) in view, back up and turn? or maybe use bump sensor?
+  //   // after, go back to OBSERVING
+  //   reaction (startup) -> reset(TURN_RANDOM) {=
+  //     lf_set_mode(TURN_RANDOM);
+  //   =}
+  // }
+
+  // mode TURN_RANDOM {
+  //   reaction(yaw) l_dist, r_dist -> reset(MOVE_FORWARD_RANDOM), motor.left_power, motor.right_power {=
+  //     lf_set(motor.left_power, -0.05f);
+  //     lf_set(motor.right_power, 0.05f);
+
+  //     float random_angle = 25 // TODO: replace placeholder
+
+  //     if (fabs(self->temp_angle - yaw->value) >= random_angle) {
+  //       lf_set(motor.left_power, 0.0f);
+  //       lf_set(motor.right_power, 0.0f);
+
+  //       // TODO: maybe check if there is an object in front?
+  //       // if yes then keep rotating ? or until it leaves the camera periphery?
+
+  //       float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+  //       self->temp_dist = lr_avg_dist;
+
+  //       lf_set_mode(MOVE_FORWARD_RANDOM);
+  //     }
+  //   =}
+  // }
+
+  // mode MOVE_FORWARD_RANDOM {
+  //   reaction(l_dist, r_dist) yaw -> reset(OBSERVING), motor.left_power, motor.right_power {=
+  //     lf_set(motor.left_power, 0.1f);
+  //     lf_set(motor.right_power, 0.1f);
+
+  //     float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+
+  //     float random_dist = 0.5f;
+
+  //     if (fabs(self->temp_dist - lr_avg_dist) >= random_dist) {
+  //       lf_set(motor.left_power, 0.0f);
+  //       lf_set(motor.right_power, 0.0f);
+
+  //       self->temp_angle = yaw->value;
+
+  //       lf_set_mode(OBSERVING);
+  //     }
+  //   =}
+  // }
+
+  // mode PATHFIND {
+  //   // target object has been found, start travelling toward it
+  //   // keep object in center as much as possible
+  //   // if target is behind an object, try to navigate around it
+  //   // maybe keep some bias direction so the robot knows to eventually travel to it after avoiding
+
+  //   // should camera observation, VLM request and navigation be in parallel?
+  // }
 }
   
 main reactor {
   timer t(0, 20 msec) // need this to be kind of frequent to avoid delay in 
-  
-  r = new Robot()
+
+  robot = new Robot()
+  motor = new MotorsWithFeedback()
   d = new Display()
 
   // gets distance traveled
@@ -154,22 +241,22 @@ main reactor {
   c2 = new AngleToDistance()
 
   // gets yaw measurement
-  g = new GyroAngle()
+  gyro = new GyroAngle()
 
   encoder.left -> c1.angle
   encoder.right -> c2.angle
-  c1.distance -> r.l_dist
-  c2.distance -> r.r_dist
+  c1.distance -> robot.l_dist
+  c2.distance -> robot.r_dist
 
-  g.z -> r.yaw
+  gyro.z -> robot.yaw
 
-  r.l0 -> d.line0
-  r.l1 -> d.line1
-  r.l2 -> d.line2
-  r.l3 -> d.line3
+  robot.l0 -> d.line0
+  robot.l1 -> d.line1
+  robot.l2 -> d.line2
+  robot.l3 -> d.line3
 
-  reaction(t) -> encoder.trigger, g.trigger {=
+  reaction(t) -> encoder.trigger, gyro.trigger {=
     lf_set(encoder.trigger, true);
-    lf_set(g.trigger, true);
+    lf_set(gyro.trigger, true);
   =}
 }
