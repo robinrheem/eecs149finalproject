@@ -11,14 +11,14 @@ target C {
 }
 
 import Display from "lib/Display.lf"
-import Motors from "lib/Motors.lf"
+// import Motors from "lib/Motors.lf"
 import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
 import GyroAngle from "lib/IMU.lf"
 import Encoders from "lib/Encoders.lf"
-// import EdgeSensor from "EdgeSensor.lf"
 
 preamble {=
   #include <math.h>
+  #include "pico/stdlib.h"
 =}
 
 // returns distance travelled in meters.
@@ -32,15 +32,6 @@ reactor AngleToDistance {
   =}
 }
 
-reactor RandomFloat {
-  output random_float: float
-
-  reaction(startup) -> random_float {=
-    srand(time(0));
-    return ((float) rand() / (float) RAND_MAX);
-  =}
-}
-
 reactor Robot {
   reset state temp_dist: float = 0
   input l_dist: float
@@ -48,9 +39,6 @@ reactor Robot {
 
   reset state temp_angle: float = 0
   input yaw: float     // Yaw angle
-
-  reset state l_speed: float = 0.1
-  reset state r_speed: float = 0.1
 
   // outputs for motor
   output left: float
@@ -61,164 +49,85 @@ reactor Robot {
   output l2: string
   output l3: string
 
-  // state goal_found: bool = false
+  timer t1(0, 20 ms)
 
-  reaction(startup) -> l0 {=
-    lf_set(l0, "INIT");
-  =}
+  state buf: char[17] = {0}
+  state idx: int = 0
 
   initial mode DRIVING {
-    reaction (yaw) -> l0, l2, l3, left, right {=
-      lf_set(l0, "DRIVING");
+    reaction(t1) -> l0, l2, l3 {=
+      lf_set(l0, "receiving data");
 
-      float angle_diff = yaw->value;
-      float speed_adjustment = fabs(angle_diff * 0.02);
-      if (angle_diff < -2.0f) {
-        self->l_speed += speed_adjustment;
-        self->r_speed -= speed_adjustment;        
+      static char buf0[17];
+      snprintf(buf0, 17, "size: %4d", sizeof(self->buf) - 1);
 
-        lf_set(left, self->l_speed);
-        lf_set(right, self->r_speed);
+      lf_set(l2, buf0);
 
-        lf_set(l3, "adjust left");
-      } else if (angle_diff > 2.0f) {
-        self->l_speed -= speed_adjustment;
-        self->r_speed += speed_adjustment;
-
-        lf_set(left, self->l_speed);
-        lf_set(right, self->r_speed);
-        lf_set(l3, "adjust right");
-      } else {
-        lf_set(left, self->l_speed);
-        lf_set(right, self->r_speed);
-
-        lf_set(l3, "ok");
+      int c;
+      while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+        if (c == '\n' || c == '\r') {
+          self->buf[self->idx] = '\0';
+          lf_set(l3, self->buf);
+          self->idx = 0;
+        } else if (self->idx < 17 - 1) {
+          self->buf[self->idx++] = (char)c;
+        }
       }
+
+      // int c = getchar_timeout_us(0); // non-blocking read
+      // if (c != PICO_ERROR_TIMEOUT) {
+      //   if (c == '\n' || c == '\r') {
+      //     self->buf[self->idx] = '\0';
+      //     lf_set(l3, self->buf); // write to pololu screen
+      //     self->idx = 0;
+      //   } else if (self->idx < sizeof(self->buf) - 1) {
+      //     self->buf[self->idx++] = (char)c;
+      //   }
+      // }
     =}
 
-    reaction(l_dist, r_dist) yaw -> reset(TURNING), l0, left, right {=
-      lf_set(l0, "DRIVING");
+  //   reaction(l_dist, r_dist) yaw -> reset(TURNING), l0, l2, l3, left, right {=
+  //     lf_set(l0, "receive data");
 
-      float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+  //   //   lf_set(left, 0.1f);
+  //   //   lf_set(right, 0.1f);
 
-      if (fabs(self->temp_dist - lr_avg_dist) >= 10.0f) {
-        lf_set(l0, "stop");
-        lf_set(left, 0.0f);
-        lf_set(right, 0.0f);
+  //   //   float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
 
-        self->temp_angle = yaw->value;
+  //   //   if (fabs(self->temp_dist - lr_avg_dist) >= 2.0f) {
+  //   //     lf_set(l0, "stop");
+  //   //     lf_set(left, 0.0f);
+  //   //     lf_set(right, 0.0f);
 
-        lf_set_mode(TURNING);
-      }
-    =}
-  }
+  //   //     self->temp_angle = yaw->value;
 
-  mode TURNING {
-    reaction(yaw) l_dist, r_dist -> reset(DRIVING), l0, left, right {=
-      lf_set(l0, "TURNING");
-
-      lf_set(left, 0.0f);
-      lf_set(right, self->r_speed);
-
-      if (fabs(self->temp_angle - yaw->value) >= 90) {
-        lf_set(l0, "stop turning");
-
-        lf_set(left, 0.0f);
-        lf_set(right, 0.0f);
-
-        float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
-        self->temp_dist = lr_avg_dist;
-        self->temp_angle = yaw->value;
-
-        lf_set_mode(DRIVING);
-
-      }
-    =}
-  }
-
-  // initial mode OBSERVING {
-  //   // is the goal target in my vision?
-  //   reaction(startup) {=
-  //     // send camera data to VLM
-  //     // get output and set goal_found to status
-  //   =}
-
-  //   // if yes, change mode to pathfind, else search
-  //   reaction (goal_found) -> reset(SEARCH), reset(PATHFIND) {=
-  //     if (goal_found) {
-  //       lf_set_mode(PATHFIND);
-  //     } else {
-  //       lf_set_mode(SEARCH);
-  //     }
+  //   //     lf_set_mode(TURNING);
+  //   //   }
   //   =}
   // }
 
-  // mode SEARCH {
-  //   // different naive implementations
-  //   // 1. random walk
-  //   // 2. spiral
+  // mode TURNING {
+  //   reaction(yaw) l_dist, r_dist -> reset(DRIVING), l0, left, right {=
+  //     lf_set(l0, "TURNING");
 
-  //   // lets assume random walk for now
-  //   // start in scan mode, ask VLM if target is in view: if yes, switch to pathfind
-  //   // else: turn a random angle,
-  //   // then move forward a random angle
-  //   // if obstacle (object that is not target) in view, back up and turn? or maybe use bump sensor?
-  //   // after, go back to OBSERVING
-  //   reaction (startup) -> reset(TURN_RANDOM) {=
-  //     lf_set_mode(TURN_RANDOM);
-  //   =}
-  // }
+  //     lf_set(left, 0.0f);
+  //     lf_set(right, self->r_speed);
 
-  // mode TURN_RANDOM {
-  //   reaction(yaw) l_dist, r_dist -> reset(MOVE_FORWARD_RANDOM), motor.left_power, motor.right_power {=
-  //     lf_set(motor.left_power, -0.05f);
-  //     lf_set(motor.right_power, 0.05f);
+  //     if (fabs(self->temp_angle - yaw->value) >= 90) {
+  //       lf_set(l0, "stop turning");
 
-  //     float random_angle = 25 // TODO: replace placeholder
-
-  //     if (fabs(self->temp_angle - yaw->value) >= random_angle) {
-  //       lf_set(motor.left_power, 0.0f);
-  //       lf_set(motor.right_power, 0.0f);
-
-  //       // TODO: maybe check if there is an object in front?
-  //       // if yes then keep rotating ? or until it leaves the camera periphery?
+  //       lf_set(left, 0.0f);
+  //       lf_set(right, 0.0f);
 
   //       float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
   //       self->temp_dist = lr_avg_dist;
-
-  //       lf_set_mode(MOVE_FORWARD_RANDOM);
-  //     }
-  //   =}
-  // }
-
-  // mode MOVE_FORWARD_RANDOM {
-  //   reaction(l_dist, r_dist) yaw -> reset(OBSERVING), motor.left_power, motor.right_power {=
-  //     lf_set(motor.left_power, 0.1f);
-  //     lf_set(motor.right_power, 0.1f);
-
-  //     float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
-
-  //     float random_dist = 0.5f;
-
-  //     if (fabs(self->temp_dist - lr_avg_dist) >= random_dist) {
-  //       lf_set(motor.left_power, 0.0f);
-  //       lf_set(motor.right_power, 0.0f);
-
   //       self->temp_angle = yaw->value;
 
-  //       lf_set_mode(OBSERVING);
+  //       lf_set_mode(DRIVING);
+
   //     }
   //   =}
-  // }
-
-  // mode PATHFIND {
-  //   // target object has been found, start travelling toward it
-  //   // keep object in center as much as possible
-  //   // if target is behind an object, try to navigate around it
-  //   // maybe keep some bias direction so the robot knows to eventually travel to it after avoiding
-
-  //   // should camera observation, VLM request and navigation be in parallel?
-  // }
+  }
 }
   
 main reactor {
