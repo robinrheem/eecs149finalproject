@@ -73,17 +73,6 @@ reactor Robot {
           self->buf[self->idx++] = (char)c;
         }
       }
-
-      // int c = getchar_timeout_us(0); // non-blocking read
-      // if (c != PICO_ERROR_TIMEOUT) {
-      //   if (c == '\n' || c == '\r') {
-      //     self->buf[self->idx] = '\0';
-      //     lf_set(l3, self->buf); // write to pololu screen
-      //     self->idx = 0;
-      //   } else if (self->idx < sizeof(self->buf) - 1) {
-      //     self->buf[self->idx++] = (char)c;
-      //   }
-      // }
     =}
 
   //   reaction(l_dist, r_dist) yaw -> reset(TURNING), l0, l2, l3, left, right {=
