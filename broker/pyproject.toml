@@ -4,4 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pyserial>=3.5",
+]
+
+# NOTE: On Raspberry Pi, also install picamera2:
+#   sudo apt install -y libcamera-apps python3-libcamera
+#   uv pip install picamera2
