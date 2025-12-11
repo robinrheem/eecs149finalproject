@@ -53,15 +53,13 @@ reactor Robot {
 
   state buf: char[17] = {0}
   state idx: int = 0
+  state r_speed: float = 0.0 //right motor speed 
+  state l_speed: float = 0.0 //left motor speed
+  state target_dist: float = 0.0 //target distance we want to go
+  state target_angle: float = 30.0 //target angle to turn
 
-  initial mode DRIVING {
-    reaction(t1) -> l0, l2, l3 {=
-      lf_set(l0, "receiving data");
-
-      static char buf0[17];
-      snprintf(buf0, 17, "size: %4d", sizeof(self->buf) - 1);
-
-      lf_set(l2, buf0);
+  initial mode COMMAND_PARSING {
+    reaction(t1, yaw) -> reset(DRIVING), reset(TURNING), l0, l2, l3 {=
 
       int c;
       while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
@@ -69,11 +67,81 @@ reactor Robot {
           self->buf[self->idx] = '\0';
           lf_set(l3, self->buf);
           self->idx = 0;
+
+          if (strcmp(self->buf, "drive") == 0) {
+              lf_set(l0, "Command: DRIVE");
+              self->l_speed = 0.1f;
+              self->r_speed = 0.1f;
+              self->temp_dist = 0.0f; // Reset initial distance
+              lf_set_mode(DRIVING);
+          } else if (strcmp(self->buf, "turn left") == 0) {
+              lf_set(l0, "Command: TURN LEFT");
+              self->l_speed = -0.1f; // Counter-clockwise turn
+              self->r_speed = 0.1f;
+              self->temp_angle = yaw->value; // Store current yaw
+              lf_set_mode(TURNING);
+          } else if (strcmp(self->buf, "turn right") == 0) {
+              lf_set(l0, "Command: TURN RIGHT");
+              self->l_speed = 0.1f; // Clockwise turn
+              self->r_speed = -0.1f;
+              self->temp_angle = yaw->value; // Store current yaw
+              lf_set_mode(TURNING);
+          } else {
+            lf_set(l0, "receiving data");
+          }
+
         } else if (self->idx < 17 - 1) {
           self->buf[self->idx++] = (char)c;
         }
+
+        lf_set(l0, "Unknown Command");
       }
     =}
+  }
+
+  mode DRIVING {
+    reaction(l_dist, r_dist) -> reset(COMMAND_PARSING), l0, left, right {=
+      lf_set(l0, "DRIVING");
+
+      // Set motor speeds based on state
+      lf_set(left, self->l_speed);
+      lf_set(right, self->r_speed);
+
+      // Average distance traveled since the mode began 
+      float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+      float traveled_dist = lr_avg_dist - self->temp_dist;
+
+      // Check for distance goal 
+      if (traveled_dist >= 0.5f) {
+          lf_set(l0, "STOP: Distance reached");
+          lf_set(left, 0.0f);
+          lf_set(right, 0.0f);
+          self->temp_dist = lr_avg_dist; // Update initial distance for next command
+          lf_set_mode(COMMAND_PARSING); // Return to wait for next command
+      }
+    =}
+  }
+
+  mode TURNING {
+    reaction(yaw) -> reset(COMMAND_PARSING), l0, left, right {=
+      lf_set(l0, "TURNING");
+      
+      // Set motor speeds based on state (set in COMMAND_PARSING)
+      lf_set(left, self->l_speed);
+      lf_set(right, self->r_speed);
+
+      // Calculate the absolute change in angle
+      float angle_change = fabs(self->temp_angle - yaw->value);
+
+      // Check for angle goal (e.g., turn 90 degrees)
+      if (angle_change >= self->target_angle) {
+          lf_set(l0, "STOP: Angle reached");
+          lf_set(left, 0.0f);
+          lf_set(right, 0.0f);
+          lf_set_mode(COMMAND_PARSING); // Return to wait for next command
+      }
+    =}
+  }
 
   //   reaction(l_dist, r_dist) yaw -> reset(TURNING), l0, l2, l3, left, right {=
   //     lf_set(l0, "receive data");
@@ -96,7 +164,7 @@ reactor Robot {
   // }
 
   // mode TURNING {
-  //   reaction(yaw) l_dist, r_dist -> reset(DRIVING), l0, left, right {=
+  //   reaction(yaw) l_dist, r_dist -> reset(REASONING), l0, left, right {=
   //     lf_set(l0, "TURNING");
 
   //     lf_set(left, 0.0f);
@@ -116,7 +184,7 @@ reactor Robot {
 
   //     }
   //   =}
-  }
+  // }
 }
   
 main reactor {

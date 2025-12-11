@@ -6,10 +6,20 @@ LINUX_PORT = "/dev/ttyACM0"
 # port for mac
 MACOS_PORT = "/dev/cu.usbmodem2101"
 
-ser = serial.Serial(MACOS_PORT, 115200)
+ser = serial.Serial(LINUX_PORT, 115200)
 
 while True:
-	message = "hello from mbp\n"
+	message = "drive\n"
 	ser.write(message.encode())
 	print(f"sent message: {message}")
-	time.sleep(1)
+	time.sleep(10)
+
+	message = "turn left\n"
+	ser.write(message.encode())
+	print(f"sent message: {message}")
+	time.sleep(10)
+
+	message = "turn right\n"
+	ser.write(message.encode())
+	print(f"sent message: {message}")
+	time.sleep(10)
