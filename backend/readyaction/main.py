@@ -127,8 +127,8 @@ async def root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/api/v1/robot/commands")
-async def get_commands():
+@app.get("/api/v1/commands")
+async def commands():
     """Robot polls for commands here"""
     commands = list(command_queue)
     command_queue.clear()
@@ -161,7 +161,7 @@ async def get_frame_image():
 
 
 @app.post("/api/v1/commands")
-async def send_command(request: CommandRequest):
+async def create_command(request: CommandRequest):
     """Browser sends commands for the robot"""
     cmd = {
         "command": request.command,
