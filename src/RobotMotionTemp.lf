@@ -1,0 +1,105 @@
+target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true
+  }
+  
+  import Display from "lib/Display.lf"
+  import Encoders from "lib/Encoders.lf"
+  import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+  import Accelerometer from "lib/IMU.lf"
+  import GyroAngle from "lib/IMU.lf"
+  import Tilt from "Tilt.lf"
+  
+  preamble {=
+    #include <math.h>
+  =}
+  
+  main reactor {
+      e = new Encoders()
+      m = new MotorsWithFeedback()
+      a = new Accelerometer()
+      g = new GyroAngle()
+      tilt = new Tilt()
+      d = new Display()
+  
+      timer t(0, 10ms)
+  
+      state turning_top_rotation: float = 0
+  
+      reaction(t) -> e.trigger, a.trigger, g.trigger {=
+          lf_set(e.trigger, true);
+          lf_set(a.trigger, true);
+          lf_set(g.trigger, true);
+      =}
+  
+      reaction(startup) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed {=
+          lf_set(m.left, e.left->value);
+          lf_set(m.right, e.right->value);
+          lf_set(m.left_speed, 0.2f);
+          lf_set(m.right_speed, -0.2f);
+      =}
+  
+      reaction(a.x, a.y, a.z) -> tilt.x, tilt.y, tilt.z {=
+          lf_set(tilt.x, a.x->value);
+          lf_set(tilt.y, a.y->value);
+          lf_set(tilt.z, a.z->value);
+      =}
+  
+      initial mode FINDINGUP {
+          reaction(tilt.pitch, tilt.roll) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed, reset(DRIVINGUP) {=
+              lf_set(m.left, e.left->value);
+              lf_set(m.right, e.right->value);
+              
+              if (abs(tilt.roll->value) <= 2 && tilt.pitch->value >= 10) {
+                  lf_set(m.left_speed, 0.2f);
+                  lf_set(m.right_speed, 0.2f);
+                  lf_set_mode(DRIVINGUP);
+              }
+          =}
+      }
+  
+      mode DRIVINGUP {
+          reaction(tilt.roll) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed {=
+              lf_set(m.left, e.left->value);
+              lf_set(m.right, e.right->value);
+  
+              lf_set(m.left_speed, tilt.roll->value * 0.004f + 0.2f);
+              lf_set(m.right_speed, tilt.roll->value * -0.004f + 0.2f);
+          =}
+  
+          reaction(tilt.pitch, tilt.roll) g.z -> m.left_speed, m.right_speed, reset(TURNINGTOP) {=
+              if (tilt.pitch->value <= 2 && abs(tilt.roll->value) <= 2) {
+                  lf_set(m.left_speed, 0.2f);
+                  lf_set(m.right_speed, -0.2f);
+                  self->turning_top_rotation = g.z->value;
+                  lf_set_mode(TURNINGTOP);
+              }
+          =}
+      }
+  
+      mode TURNINGTOP {
+          reaction(g.z) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed, reset(DRIVINGDOWN) {=
+              lf_set(m.left, e.left->value);
+              lf_set(m.right, e.right->value);
+  
+              if (abs(g.z->value - self->turning_top_rotation) >= 180) {
+                  lf_set(m.left_speed, 0.2f);
+                  lf_set(m.right_speed, 0.2f);
+                  lf_set_mode(DRIVINGDOWN);
+              }
+          =}
+      }
+  
+      mode DRIVINGDOWN {
+          reaction(tilt.roll) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed {=
+              lf_set(m.left, e.left->value);
+              lf_set(m.right, e.right->value);
+  
+              lf_set(m.left_speed, tilt.roll->value * -0.004f + 0.2f);
+              lf_set(m.right_speed, tilt.roll->value * 0.004f + 0.2f);
+          =}
+      }
+  }

@@ -1,7 +1,3 @@
-/**
-  * Robot Motion Main Robot Control
-  */
-
 target C {
   platform: {
     name: "rp2040",
@@ -11,217 +7,218 @@ target C {
 }
 
 import Display from "lib/Display.lf"
-// import Motors from "lib/Motors.lf"
-import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
-import GyroAngle from "lib/IMU.lf"
 import Encoders from "lib/Encoders.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import Accelerometer from "lib/IMU.lf"
+import GyroAngle from "lib/IMU.lf"
+// import Tilt from "Tilt.lf"
 
 preamble {=
   #include <math.h>
+  #include <stdio.h>
+  #include <string.h>
+  #include <stdlib.h>
   #include "pico/stdlib.h"
 =}
 
-// returns distance travelled in meters.
-reactor AngleToDistance {
-  input angle: int32_t
-  output distance: float
+main reactor {
+    e = new Encoders()
+    m = new MotorsWithFeedback()
+    a = new Accelerometer()
+    g = new GyroAngle()
+    d = new Display()
 
-  reaction(angle) -> distance {=
-      // arc length = theta * r, where theta is in radians
-      lf_set(distance, (float) angle->value * ((float) M_PI / 180.0f) * (0.03175f / 2.0f));
-  =}
-}
+    timer t(0, 10ms)
 
-reactor Robot {
-  reset state temp_dist: float = 0
-  input l_dist: float
-  input r_dist: float
+    state buf: char*       // command buffer
+    state buf_size: int = 17
+    state idx: int = 0
 
-  reset state temp_angle: float = 0
-  input yaw: float     // Yaw angle
+    state l_speed: float = 0.0
+    state r_speed: float = 0.0
 
-  // outputs for motor
-  output left: float
-  output right: float
+    // For DRIVING
+    state start_ticks: float = 0.0
+    state target_ticks: float = 0.0
+    state driving_initialized: int = 0
 
-  output l0: string
-  output l1: string
-  output l2: string
-  output l3: string
+    // For TURNING using yaw
+    state current_yaw: float = 0.0
+    state start_angle: float = 0.0
+    state target_angle_delta: float = 0.0   // positive for left, negative for right
 
-  timer t1(0, 20 ms)
+    // Periodic sensor updates 
+    reaction(t) -> e.trigger, a.trigger, g.trigger {=
+        lf_set(e.trigger, true);
+        lf_set(a.trigger, true);
+        lf_set(g.trigger, true);
+    =}
 
-  state buf: char[17] = {0}
-  state idx: int = 0
-  state r_speed: float = 0.0 //right motor speed 
-  state l_speed: float = 0.0 //left motor speed
-  state target_dist: float = 0.0 //target distance we want to go
-  state target_angle: float = 30.0 //target angle to turn
+    reaction(startup) e.left, e.right -> m.left, m.right, d.line0 {=
+        // Link motors to encoders 
+        lf_set(m.left, e.left->value);
+        lf_set(m.right, e.right->value);
 
-  initial mode COMMAND_PARSING {
-    reaction(t1, yaw) -> reset(DRIVING), reset(TURNING), l0, l2, l3 {=
+        stdio_init_all();
 
-      int c;
-      while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
-        if (c == '\n' || c == '\r') {
-          self->buf[self->idx] = '\0';
-          lf_set(l3, self->buf);
-          self->idx = 0;
-
-          if (strcmp(self->buf, "drive") == 0) {
-              lf_set(l0, "Command: DRIVE");
-              self->l_speed = 0.1f;
-              self->r_speed = 0.1f;
-              self->temp_dist = 0.0f; // Reset initial distance
-              lf_set_mode(DRIVING);
-          } else if (strcmp(self->buf, "turn left") == 0) {
-              lf_set(l0, "Command: TURN LEFT");
-              self->l_speed = -0.1f; // Counter-clockwise turn
-              self->r_speed = 0.1f;
-              self->temp_angle = yaw->value; // Store current yaw
-              lf_set_mode(TURNING);
-          } else if (strcmp(self->buf, "turn right") == 0) {
-              lf_set(l0, "Command: TURN RIGHT");
-              self->l_speed = 0.1f; // Clockwise turn
-              self->r_speed = -0.1f;
-              self->temp_angle = yaw->value; // Store current yaw
-              lf_set_mode(TURNING);
-          } else {
-            lf_set(l0, "receiving data");
-          }
-
-        } else if (self->idx < 17 - 1) {
-          self->buf[self->idx++] = (char)c;
+        // Allocate command buffer
+        self->buf = (char*) malloc(self->buf_size);
+        if (self->buf != NULL) {
+            self->buf[0] = '\0';
         }
 
-        lf_set(l0, "Unknown Command");
-      }
+        lf_set(d.line0, "Mode: CMD");
     =}
-  }
 
-  mode DRIVING {
-    reaction(l_dist, r_dist) -> reset(COMMAND_PARSING), l0, left, right {=
-      lf_set(l0, "DRIVING");
-
-      // Set motor speeds based on state
-      lf_set(left, self->l_speed);
-      lf_set(right, self->r_speed);
-
-      // Average distance traveled since the mode began 
-      float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
-      float traveled_dist = lr_avg_dist - self->temp_dist;
-
-      // Check for distance goal 
-      if (traveled_dist >= 0.5f) {
-          lf_set(l0, "STOP: Distance reached");
-          lf_set(left, 0.0f);
-          lf_set(right, 0.0f);
-          self->temp_dist = lr_avg_dist; // Update initial distance for next command
-          lf_set_mode(COMMAND_PARSING); // Return to wait for next command
-      }
+    // Keep track of the latest yaw (g.z)
+    reaction(g.z) {=
+        self->current_yaw = g.z->value;
     =}
-  }
 
-  mode TURNING {
-    reaction(yaw) -> reset(COMMAND_PARSING), l0, left, right {=
-      lf_set(l0, "TURNING");
-      
-      // Set motor speeds based on state (set in COMMAND_PARSING)
-      lf_set(left, self->l_speed);
-      lf_set(right, self->r_speed);
-
-      // Calculate the absolute change in angle
-      float angle_change = fabs(self->temp_angle - yaw->value);
-
-      // Check for angle goal (e.g., turn 90 degrees)
-      if (angle_change >= self->target_angle) {
-          lf_set(l0, "STOP: Angle reached");
-          lf_set(left, 0.0f);
-          lf_set(right, 0.0f);
-          lf_set_mode(COMMAND_PARSING); // Return to wait for next command
-      }
+    // line0: status / command
+    // line1: yaw
+    // line2: last raw command
+    reaction(g.z) -> d.line1 {=
+        static char buf[17];
+        snprintf(buf, 17, "yaw: %.1f", g.z->value);
+        lf_set(d.line1, buf);
     =}
-  }
 
-  //   reaction(l_dist, r_dist) yaw -> reset(TURNING), l0, l2, l3, left, right {=
-  //     lf_set(l0, "receive data");
+    // ============================================================
+    //  MODE 1: COMMAND_PARSING
+    // ============================================================
+    initial mode COMMAND_PARSING {
+        reaction(t) -> reset(DRIVING), reset(TURNING), d.line0, d.line2 {=
 
-  //   //   lf_set(left, 0.1f);
-  //   //   lf_set(right, 0.1f);
+            if (self->buf == NULL) return;
 
-  //   //   float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
+            int c;
+            while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+                if (c == '\n' || c == '\r') {
+                    // End of command line
+                    self->buf[self->idx] = '\0';
 
-  //   //   if (fabs(self->temp_dist - lr_avg_dist) >= 2.0f) {
-  //   //     lf_set(l0, "stop");
-  //   //     lf_set(left, 0.0f);
-  //   //     lf_set(right, 0.0f);
+                    if (self->idx > 0) {
+                        lf_set(d.line2, self->buf);   
+                    }
+                    self->idx = 0;
 
-  //   //     self->temp_angle = yaw->value;
+                    if (strcmp(self->buf, "drive") == 0) {
+                        lf_set(d.line0, "Command: DRIVE");
 
-  //   //     lf_set_mode(TURNING);
-  //   //   }
-  //   =}
-  // }
+                        // set speeds and target distance
+                        self->l_speed = 0.1f;
+                        self->r_speed = 0.1f;
 
-  // mode TURNING {
-  //   reaction(yaw) l_dist, r_dist -> reset(REASONING), l0, left, right {=
-  //     lf_set(l0, "TURNING");
+                        // drive for an arbitrary distance (encoder ticks)
+                        self->target_ticks = 500.0f;   
+                        self->driving_initialized = 0;
 
-  //     lf_set(left, 0.0f);
-  //     lf_set(right, self->r_speed);
+                        lf_set_mode(DRIVING);
+                        return; 
 
-  //     if (fabs(self->temp_angle - yaw->value) >= 90) {
-  //       lf_set(l0, "stop turning");
+                    } else if (strcmp(self->buf, "turn left") == 0) {
+                        lf_set(d.line0, "Command: TURN L");
 
-  //       lf_set(left, 0.0f);
-  //       lf_set(right, 0.0f);
+                        self->l_speed = -0.1f;  // counter-clockwise
+                        self->r_speed =  0.1f;
 
-  //       float lr_avg_dist = (l_dist->value + r_dist->value) / 2.0f;
-  //       self->temp_dist = lr_avg_dist;
-  //       self->temp_angle = yaw->value;
+                        self->start_angle = self->current_yaw;
+                        self->target_angle_delta = 90.0f;   // 90-degree left turn
 
-  //       lf_set_mode(DRIVING);
+                        lf_set_mode(TURNING);
+                        return;
 
-  //     }
-  //   =}
-  // }
+                    } else if (strcmp(self->buf, "turn right") == 0) {
+                        lf_set(d.line0, "Command: TURN R");
+
+                        self->l_speed =  0.1f;  // clockwise
+                        self->r_speed = -0.1f;
+
+                        self->start_angle = self->current_yaw;
+                        self->target_angle_delta = -90.0f;  // 90-degree right turn
+
+                        lf_set_mode(TURNING);
+                        return;
+
+                    } else if (self->buf[0] != '\0') {
+                        lf_set(d.line0, "Unknown Command");
+                    }
+
+                    // Clear buffer after processing
+                    self->buf[0] = '\0';
+
+                } else if (self->idx < self->buf_size - 1) {
+                    // Accumulate characters into buffer
+                    self->buf[self->idx++] = (char)c;
+                }
+            }
+        =}
+    }
+
+    // ============================================================
+    //  MODE 2: DRIVING
+    //   - Uses encoders to estimate distance driven in "ticks"
+    //   - Returns to COMMAND_PARSING when done
+    // ============================================================
+    mode DRIVING {
+        reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left, m.right, m.left_speed, m.right_speed, d.line0 {=
+            lf_set(m.left, e.left->value);
+            lf_set(m.right, e.right->value);
+
+            // Initialize distance reference on first entry
+            if (!self->driving_initialized) {
+                float avg_ticks = ((float) fabs(e.left->value) +
+                                   (float) fabs(e.right->value)) / 2.0f;
+                self->start_ticks = avg_ticks;
+                self->driving_initialized = 1;
+            }
+
+            // Apply commanded speeds
+            lf_set(m.left_speed, self->l_speed);
+            lf_set(m.right_speed, self->r_speed);
+
+            // Compute distance traveled since start (in encoder tick units)
+            float avg_ticks = ((float) fabs(e.left->value) +
+                               (float) fabs(e.right->value)) / 2.0f;
+            float traveled = avg_ticks - self->start_ticks;
+
+            if (traveled >= self->target_ticks) {
+                // Stop and go back to command mode
+                lf_set(m.left_speed, 0.0f);
+                lf_set(m.right_speed, 0.0f);
+                lf_set(d.line0, "Drive done");
+                lf_set_mode(COMMAND_PARSING);
+            }
+        =}
+    }
+
+    // ============================================================
+    //  MODE 3: TURNING
+    //   - Uses gyro yaw (current_yaw) to turn to target_angle_delta
+    //   - Returns to COMMAND_PARSING when done
+    // ============================================================
+    mode TURNING {
+        reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left, m.right, m.left_speed, m.right_speed, d.line0 {=
+            lf_set(m.left, e.left->value);
+            lf_set(m.right, e.right->value);
+
+            // Apply commanded turning speeds
+            lf_set(m.left_speed, self->l_speed);
+            lf_set(m.right_speed, self->r_speed);
+
+            // Compute yaw difference since we started turning
+            float delta = self->current_yaw - self->start_angle;
+
+            if ((self->target_angle_delta > 0 && delta >= self->target_angle_delta) ||
+                (self->target_angle_delta < 0 && delta <= self->target_angle_delta)) {
+
+                lf_set(m.left_speed, 0.0f);
+                lf_set(m.right_speed, 0.0f);
+                lf_set(d.line0, "Turn done");
+                lf_set_mode(COMMAND_PARSING);
+            }
+        =}
+    }
 }
-  
-main reactor {
-  timer t(0, 20 msec) // need this to be kind of frequent to avoid delay in 
 
-  robot = new Robot()
-  motor = new MotorsWithFeedback()
-  d = new Display()
-
-  // gets distance traveled
-  encoder = new Encoders()
-  c1 = new AngleToDistance()
-  c2 = new AngleToDistance()
-
-  // gets yaw measurement
-  gyro = new GyroAngle()
-
-  encoder.left -> c1.angle
-  encoder.right -> c2.angle
-  c1.distance -> robot.l_dist
-  c2.distance -> robot.r_dist
-
-  gyro.z -> robot.yaw
-
-  // motor w/ feedback inputs
-  robot.left -> motor.left_speed
-  robot.right -> motor.right_speed
-  encoder.left -> motor.left
-  encoder.right -> motor.right
-
-  robot.l0 -> d.line0
-  robot.l1 -> d.line1
-  robot.l2 -> d.line2
-  robot.l3 -> d.line3
-
-  reaction(t) -> encoder.trigger, gyro.trigger {=
-    lf_set(encoder.trigger, true);
-    lf_set(gyro.trigger, true);
-  =}
-}
