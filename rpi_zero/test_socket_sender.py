@@ -19,8 +19,8 @@ load_dotenv()
 # Configuration
 # IMPORTANT: Add your IP and port in a .env file
 RECEIVER_IP = os.getenv("IP")
-RECEIVER_PORT = os.getenv("PORT")
-CAMERA_RESOLUTION = (480, 640)  # Adjust as needed
+RECEIVER_PORT = int(os.getenv("PORT"))
+CAMERA_RESOLUTION = (720, 960)  # Adjust as needed
 CAMERA_WARMUP = 2  # Num seconds to let camera warm up
 
 def send_image():
