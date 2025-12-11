@@ -1,13 +1,86 @@
+from io import BytesIO
 from pathlib import Path
 import subprocess
+import time
+from typing import Annotated
 import typer
 from rich import print
+import httpx
+import serial
 
 app = typer.Typer()
 
+
 @app.command()
-def main():
-    typer.echo("Hello, World!")
+def start(
+    relay_server_address: Annotated[
+        str,
+        typer.Option(help="Address of the relay server", envvar="RELAY_SERVER_ADDRESS"),
+    ] = "http://localhost:8000",
+    serial_port: Annotated[
+        str,
+        typer.Option(help="Serial port", envvar="SERIAL_PORT"),
+    ] = "/dev/ttyACM0",
+    baud_rate: Annotated[
+        int,
+        typer.Option(help="Serial baud rate", envvar="BAUD_RATE"),
+    ] = 115200,
+    interval: Annotated[
+        int,
+        typer.Option(help="Capture interval in milliseconds", envvar="CAPTURE_INTERVAL"),
+    ] = 100,
+):
+    """
+    Start the Broker.
+    
+    Continuously captures images from the PiCamera and sends them to the relay server.
+    """
+    # Import picamera2 here so the module can be imported on non-Pi systems
+    try:
+        from picamera2 import Picamera2
+    except ImportError:
+        print("[red]Error: picamera2 not installed[/red]")
+        print("Install with: sudo apt install -y libcamera-apps python3-libcamera && uv pip install picamera2")
+        raise typer.Exit(1)
+    print(f"[blue]→[/blue] Relay server: {relay_server_address}")
+    print(f"[blue]→[/blue] Serial port: {serial_port} @ {baud_rate} baud")
+    print(f"[blue]→[/blue] Capture interval: {interval}ms")
+    print("[blue]→[/blue] Initializing camera...")
+    camera = Picamera2()
+    camera.configure(camera.create_still_configuration())
+    camera.start()
+    print("[green]✓[/green] Camera initialized")
+    print("[blue]→[/blue] Opening serial port...")
+    ser = serial.Serial(serial_port, baud_rate, timeout=1)
+    print("[green]✓[/green] Serial port opened")
+    interval_seconds = interval / 1000.0
+    print("[green]✓[/green] Running (Ctrl+C to stop)")
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            while True:
+                try:
+                    buffer = BytesIO()
+                    camera.capture_file(buffer, format="jpeg")
+                    buffer.seek(0)
+                    response = client.post(
+                        f"{relay_server_address}/api/v1/actions",
+                        files={"image": ("frame.jpg", buffer, "image/jpeg")},
+                    )
+                    if response.status_code == 200:
+                        data = response.content
+                        ser.write(data)
+                        print(f"[green]✓[/green] Frame sent, wrote {len(data)} bytes to serial")
+                    else:
+                        print(f"[yellow]![/yellow] Server responded: {response.status_code}")
+                except Exception as e:
+                    print(f"[red]✗[/red] Error: {e}")
+                time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        print("\n[yellow]Shutting down...[/yellow]")
+    finally:
+        camera.stop()
+        ser.close()
+        print("[green]✓[/green] Done")
 
 
 @app.command()
@@ -119,5 +192,5 @@ rm -f /tmp/{wheel.name}
         raise typer.Exit(1)
     print("\n:white_check_mark: [green]Deployment complete![/green]")
     print(f"\nConnect: [blue]ssh {server}[/blue]")
-    print("Then run: [blue]cb --help[/blue]")
+    print("Then run: [blue]broker --help[/blue]")
 
