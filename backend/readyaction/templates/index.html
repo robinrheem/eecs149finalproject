@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VLM Inference Demo</title>
+    <title>Robot Control Panel</title>
     <style>
         * {
             margin: 0;
@@ -12,217 +12,620 @@
         }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 10px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            padding: 20px;
+            color: #fff;
         }
         .container {
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
         }
         h1 {
-            color: #333;
             text-align: center;
-            margin-bottom: 15px;
-            font-size: 24px;
+            margin-bottom: 20px;
+            font-size: 28px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
         }
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+        }
+        @media (max-width: 900px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .panel {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .panel h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #88d3ce;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        /* Video Feed */
         .video-container {
             position: relative;
             width: 100%;
-            max-width: 640px;
-            margin: 0 auto 12px;
+            aspect-ratio: 4/3;
+            background: #000;
             border-radius: 10px;
             overflow: hidden;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
         }
-        video {
+        .video-container img,
+        .video-container canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
-            height: auto;
-            display: block;
+            height: 100%;
+            object-fit: contain;
         }
-        .status {
+        .video-container canvas {
+            pointer-events: none;
+        }
+        .no-feed {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
             text-align: center;
-            padding: 8px;
-            margin-bottom: 12px;
-            border-radius: 5px;
-            font-weight: 500;
-            font-size: 14px;
         }
-        .status.active {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        .status.inactive {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-        .output-container {
-            margin-top: 12px;
-        }
-        label {
-            display: block;
+        .feed-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
             font-weight: 600;
-            margin-bottom: 6px;
-            color: #555;
-            font-size: 14px;
         }
-        textarea {
+        .feed-status.connected {
+            background: #28a745;
+        }
+        .feed-status.disconnected {
+            background: #dc3545;
+        }
+        .mode-indicator {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            background: #667eea;
+        }
+        
+        /* Input Fields */
+        .input-group {
+            margin-bottom: 15px;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #aaa;
+        }
+        .input-group input,
+        .input-group textarea {
             width: 100%;
-            height: 80px;
-            padding: 10px;
-            border: 2px solid #e0e0e0;
+            padding: 12px;
+            border: 2px solid rgba(255,255,255,0.1);
+            background: rgba(0,0,0,0.3);
+            color: #fff;
             border-radius: 8px;
             font-size: 14px;
-            font-family: monospace;
+            font-family: inherit;
+        }
+        .input-group textarea {
             resize: vertical;
+            min-height: 80px;
         }
-        .controls {
-            text-align: center;
-            margin-top: 12px;
+        .input-group input:focus,
+        .input-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
         }
-        button {
-            padding: 10px 24px;
-            font-size: 14px;
+        
+        /* Buttons */
+        .btn {
+            padding: 12px 24px;
             border: none;
             border-radius: 8px;
             cursor: pointer;
-            margin: 0 6px;
-            transition: all 0.3s ease;
+            font-size: 14px;
             font-weight: 600;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
-        button.start {
-            background-color: #28a745;
-            color: white;
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
         }
-        button.start:hover {
-            background-color: #218838;
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
         }
-        button.stop {
-            background-color: #dc3545;
-            color: white;
-        }
-        button.stop:hover {
-            background-color: #c82333;
-        }
-        button:disabled {
-            background-color: #6c757d;
+        .btn:disabled {
+            opacity: 0.5;
             cursor: not-allowed;
-            opacity: 0.6;
+            transform: none;
         }
-        .info {
-            text-align: center;
-            margin-top: 12px;
-            color: #666;
+        
+        /* Results */
+        .result-box {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 15px;
+            min-height: 120px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .result-box .timestamp {
+            color: #88d3ce;
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+        .result-box .mode-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-left: 8px;
+        }
+        .result-box .mode-tag.detect {
+            background: #ffd93d;
+            color: #000;
+        }
+        .result-box .mode-tag.reason {
+            background: #667eea;
+            color: #fff;
+        }
+        
+        /* Command History */
+        .command-history {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .command-item {
+            padding: 8px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 5px;
+            margin-bottom: 5px;
             font-size: 12px;
+        }
+        .command-item .cmd {
+            color: #ffd93d;
+        }
+        .command-item .time {
+            color: #666;
+            font-size: 10px;
+        }
+        
+        /* Quick Commands */
+        .quick-commands {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        .quick-cmd {
+            padding: 10px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .quick-cmd:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.2);
+        }
+        
+        /* Polling indicator */
+        .poll-indicator {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            margin-top: 10px;
+        }
+        .poll-indicator.active {
+            color: #28a745;
+        }
+        
+        /* Stats */
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+        .stats span {
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎥 VLM Inference Demo</h1>
+        <h1>🤖 Robot Control Panel</h1>
         
-        <div class="status inactive" id="status">
-            Camera Inactive
-        </div>
-        
-        <div class="video-container">
-            <video id="webcam" autoplay playsinline></video>
-        </div>
-        
-        <div class="controls">
-            <button class="start" id="startBtn" onclick="startCapture()">Start Camera</button>
-            <button class="stop" id="stopBtn" onclick="stopCapture()" disabled>Stop Camera</button>
-        </div>
-        
-        <div class="output-container">
-            <label for="output">VLM Output:</label>
-            <textarea id="output" readonly placeholder="VLM analysis will appear here..."></textarea>
-        </div>
-        
-        <div class="info">
-            📸 Capturing and analyzing frames every 500ms
+        <div class="main-grid">
+            <!-- Left: Video Feed & Results -->
+            <div>
+                <div class="panel">
+                    <h2>📹 Robot Camera Feed</h2>
+                    <div class="video-container">
+                        <img id="robotFeed" src="" alt="Robot Camera Feed" style="display: none;">
+                        <canvas id="bboxCanvas"></canvas>
+                        <div class="no-feed" id="noFeed">
+                            <div style="font-size: 48px; margin-bottom: 10px;">📷</div>
+                            <div>Waiting for robot feed...</div>
+                            <div style="font-size: 12px; margin-top: 5px;">Robot should POST to /api/v1/actions</div>
+                        </div>
+                        <div class="feed-status disconnected" id="feedStatus">Disconnected</div>
+                        <div class="mode-indicator" id="modeIndicator" style="display: none;">-</div>
+                    </div>
+                    
+                    <div class="stats">
+                        <span>📊 Frames: <b id="frameCount">0</b></span>
+                        <span>🕐 Last update: <b id="lastUpdate">-</b></span>
+                    </div>
+                    
+                    <div class="poll-indicator active" id="pollIndicator">
+                        ● Polling for frames every 200ms
+                    </div>
+                </div>
+                
+                <!-- Analysis Results (from robot's /api/v1/actions calls) -->
+                <div class="panel" style="margin-top: 20px;">
+                    <h2>🔍 Latest Analysis Result</h2>
+                    <div class="result-box" id="resultBox">
+                        Waiting for robot to send frames with analysis...
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right: Commands -->
+            <div>
+                <!-- Robot Commands -->
+                <div class="panel">
+                    <h2>🎮 Robot Commands</h2>
+                    <p style="font-size: 12px; color: #888; margin-bottom: 15px;">
+                        Commands are queued and sent to robot when it calls /api/v1/actions
+                    </p>
+                    
+                    <div class="quick-commands">
+                        <button class="quick-cmd" onclick="sendQuickCmd('forward')">⬆️ Forward</button>
+                        <button class="quick-cmd" onclick="sendQuickCmd('backward')">⬇️ Backward</button>
+                        <button class="quick-cmd" onclick="sendQuickCmd('stop')">⏹️ Stop</button>
+                        <button class="quick-cmd" onclick="sendQuickCmd('left')">⬅️ Left</button>
+                        <button class="quick-cmd" onclick="sendQuickCmd('right')">➡️ Right</button>
+                        <button class="quick-cmd" onclick="sendQuickCmd('scan')">🔄 Scan</button>
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>Custom Command:</label>
+                        <input type="text" id="customCommand" placeholder="e.g., find_object, navigate_to, etc.">
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>Prompt / Instructions (optional):</label>
+                        <textarea id="commandPrompt" placeholder="e.g., Find a red ball and move towards it..."></textarea>
+                    </div>
+                    
+                    <button class="btn btn-primary" onclick="sendCustomCommand()" style="width: 100%;">
+                        📤 Send Command to Robot
+                    </button>
+                </div>
+                
+                <!-- Command History -->
+                <div class="panel" style="margin-top: 20px;">
+                    <h2>📜 Command History</h2>
+                    <div class="command-history" id="commandHistory">
+                        <div style="color: #666; text-align: center; padding: 20px;">No commands sent yet</div>
+                    </div>
+                </div>
+                
+                <!-- Info -->
+                <div class="panel" style="margin-top: 20px;">
+                    <h2>ℹ️ How It Works</h2>
+                    <div style="font-size: 12px; color: #aaa; line-height: 1.6;">
+                        <p><b>Robot → Server:</b> POSTs to <code>/api/v1/actions</code> with image + mode (detect/reason)</p>
+                        <p style="margin-top: 8px;"><b>Server → Robot:</b> Returns analysis result + any pending commands</p>
+                        <p style="margin-top: 8px;"><b>Browser:</b> Polls <code>/api/v1/frame</code> to see what robot sees</p>
+                        <p style="margin-top: 8px;"><b>Keyboard:</b> Arrow keys = move, Space = stop</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
+
     <script>
-        let stream = null;
-        let intervalId = null;
-        const video = document.getElementById('webcam');
-        const output = document.getElementById('output');
-        const status = document.getElementById('status');
-        const startBtn = document.getElementById('startBtn');
-        const stopBtn = document.getElementById('stopBtn');
-        async function startCapture() {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 640, height: 480 } 
-                });
-                video.srcObject = stream;
-                status.textContent = 'Camera Active - Analyzing...';
-                status.className = 'status active';
-                startBtn.disabled = true;
-                stopBtn.disabled = false;
-                intervalId = setInterval(captureAndAnalyze, 500);
-            } catch (error) {
-                console.error('Error accessing webcam:', error);
-                output.value = 'Error: Unable to access webcam. Please grant camera permissions.';
-                status.textContent = 'Error accessing camera';
-                status.className = 'status inactive';
-            }
+        let pollInterval = null;
+        let lastFrameTimestamp = 0;
+        let frameCount = 0;
+        const commandHistory = [];
+        
+        // Colors for different object classes
+        const classColors = {
+            'person': '#ff6b6b',
+            'car': '#4ecdc4',
+            'truck': '#45b7d1',
+            'bicycle': '#96ceb4',
+            'motorcycle': '#ffeaa7',
+            'bus': '#dda0dd',
+            'dog': '#ff9ff3',
+            'cat': '#feca57',
+            'bird': '#48dbfb',
+            'default': '#00ff00'
+        };
+        
+        function getClassColor(className) {
+            return classColors[className.toLowerCase()] || classColors['default'];
         }
-
-        function stopCapture() {
-            if (intervalId) {
-                clearInterval(intervalId);
-                intervalId = null;
+        
+        function drawBoundingBoxes(detections, imgWidth, imgHeight) {
+            const canvas = document.getElementById('bboxCanvas');
+            const img = document.getElementById('robotFeed');
+            const ctx = canvas.getContext('2d');
+            
+            // Match canvas size to container
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            
+            // Clear previous drawings
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (!detections || detections.length === 0) return;
+            
+            // Calculate scale factors (image is object-fit: contain)
+            const containerAspect = canvas.width / canvas.height;
+            const imageAspect = imgWidth / imgHeight;
+            
+            let displayWidth, displayHeight, offsetX, offsetY;
+            
+            if (imageAspect > containerAspect) {
+                // Image is wider than container
+                displayWidth = canvas.width;
+                displayHeight = canvas.width / imageAspect;
+                offsetX = 0;
+                offsetY = (canvas.height - displayHeight) / 2;
+            } else {
+                // Image is taller than container
+                displayHeight = canvas.height;
+                displayWidth = canvas.height * imageAspect;
+                offsetX = (canvas.width - displayWidth) / 2;
+                offsetY = 0;
             }
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-            status.textContent = 'Camera Inactive';
-            status.className = 'status inactive';
-            startBtn.disabled = false;
-            stopBtn.disabled = true;
-            video.srcObject = null;
+            
+            const scaleX = displayWidth / imgWidth;
+            const scaleY = displayHeight / imgHeight;
+            
+            detections.forEach(det => {
+                const color = getClassColor(det.class);
+                const [x, y, w, h] = det.box;
+                
+                // Scale coordinates to display size
+                const drawX = offsetX + x * scaleX;
+                const drawY = offsetY + y * scaleY;
+                const drawW = w * scaleX;
+                const drawH = h * scaleY;
+                
+                // Draw bounding box
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(drawX, drawY, drawW, drawH);
+                
+                // Draw label background
+                const label = `${det.class} ${(det.confidence * 100).toFixed(0)}%`;
+                ctx.font = 'bold 12px Arial';
+                const textWidth = ctx.measureText(label).width;
+                const textHeight = 16;
+                
+                ctx.fillStyle = color;
+                ctx.fillRect(drawX, drawY - textHeight, textWidth + 8, textHeight);
+                
+                // Draw label text
+                ctx.fillStyle = '#000';
+                ctx.fillText(label, drawX + 4, drawY - 4);
+            });
         }
-
-        async function captureAndAnalyze() {
+        
+        // Start polling for frames
+        function startPolling() {
+            pollInterval = setInterval(fetchFrame, 200);
+        }
+        
+        async function fetchFrame() {
             try {
-                // Create a canvas to capture the current video frame
-                const canvas = document.createElement('canvas');
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0);
-                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
-                const formData = new FormData();
-                formData.append('file', blob, 'frame.jpg');
-                const response = await fetch('/api/v1/actions', {
-                    method: 'POST',
-                    body: formData
-                });
-                const result = await response.json();
-                if (result.success) {
-                    const timestamp = new Date().toLocaleTimeString();
-                    output.value = `[${timestamp}] ${result.caption}`;
-                } else {
-                    output.value = `Error: ${result.error}`;
+                const response = await fetch('/api/v1/frame');
+                const data = await response.json();
+                
+                if (data.success && data.timestamp !== lastFrameTimestamp) {
+                    lastFrameTimestamp = data.timestamp;
+                    frameCount++;
+                    
+                    // Update image
+                    const img = document.getElementById('robotFeed');
+                    img.src = 'data:image/jpeg;base64,' + data.image;
+                    img.style.display = 'block';
+                    document.getElementById('noFeed').style.display = 'none';
+                    document.getElementById('feedStatus').textContent = 'Connected';
+                    document.getElementById('feedStatus').className = 'feed-status connected';
+                    
+                    // Update stats
+                    document.getElementById('frameCount').textContent = frameCount;
+                    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+                    
+                    // Update result if available
+                    if (data.result) {
+                        displayResult(data.result);
+                        
+                        // Show mode indicator
+                        const modeInd = document.getElementById('modeIndicator');
+                        modeInd.style.display = 'block';
+                        modeInd.textContent = data.result.mode === 'detect' ? '👁️ YOLO' : '🧠 VLM';
+                        
+                        // Draw bounding boxes for YOLO detections
+                        if (data.result.mode === 'detect' && data.result.detections) {
+                            // Wait for image to load to get dimensions
+                            img.onload = () => {
+                                drawBoundingBoxes(data.result.detections, img.naturalWidth, img.naturalHeight);
+                            };
+                        } else {
+                            // Clear bounding boxes for VLM mode
+                            const canvas = document.getElementById('bboxCanvas');
+                            const ctx = canvas.getContext('2d');
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        }
+                    }
                 }
             } catch (error) {
-                console.error('Error analyzing frame:', error);
-                output.value = `Error: ${error.message}`;
+                console.error('Error fetching frame:', error);
             }
         }
-        window.addEventListener('beforeunload', stopCapture);
+        
+        function displayResult(result) {
+            const box = document.getElementById('resultBox');
+            const timestamp = new Date().toLocaleTimeString();
+            
+            if (!result.success) {
+                box.innerHTML = `<div class="timestamp">${timestamp}</div><span style="color: #dc3545;">Error: ${result.error}</span>`;
+                return;
+            }
+            
+            if (result.mode === 'detect') {
+                let html = `<div class="timestamp">${timestamp} <span class="mode-tag detect">YOLO Detection</span></div>`;
+                html += `Found ${result.count} object(s)\n\n`;
+                
+                if (result.target) {
+                    html += `Target "${result.target}": ${result.target_found ? '✅ FOUND' : '❌ NOT FOUND'}\n\n`;
+                }
+                
+                if (result.detections) {
+                    result.detections.forEach(det => {
+                        html += `• ${det.class}: ${(det.confidence * 100).toFixed(1)}%\n`;
+                    });
+                }
+                
+                box.innerHTML = html;
+            } else {
+                box.innerHTML = `<div class="timestamp">${timestamp} <span class="mode-tag reason">VLM Reasoning</span></div>${result.response || result.caption || 'No response'}`;
+            }
+        }
+        
+        async function sendQuickCmd(cmd) {
+            await sendCommand(cmd, null);
+        }
+        
+        async function sendCustomCommand() {
+            const cmd = document.getElementById('customCommand').value.trim();
+            const prompt = document.getElementById('commandPrompt').value.trim();
+            
+            if (!cmd) {
+                alert('Please enter a command');
+                return;
+            }
+            
+            await sendCommand(cmd, prompt || null);
+            document.getElementById('customCommand').value = '';
+            document.getElementById('commandPrompt').value = '';
+        }
+        
+        async function sendCommand(command, prompt) {
+            try {
+                const response = await fetch('/api/v1/commands', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command, prompt })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    addToHistory(command, prompt);
+                }
+            } catch (error) {
+                console.error('Error sending command:', error);
+            }
+        }
+        
+        function addToHistory(command, prompt) {
+            commandHistory.unshift({ command, prompt, time: new Date() });
+            if (commandHistory.length > 20) commandHistory.pop();
+            
+            const container = document.getElementById('commandHistory');
+            container.innerHTML = commandHistory.map(item => `
+                <div class="command-item">
+                    <span class="cmd">${item.command}</span>
+                    ${item.prompt ? `<br><small style="color: #888;">${item.prompt}</small>` : ''}
+                    <div class="time">${item.time.toLocaleTimeString()}</div>
+                </div>
+            `).join('');
+        }
+        
+        // Keyboard shortcuts for commands
+        document.addEventListener('keydown', (e) => {
+            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+                return;
+            }
+            
+            switch(e.key) {
+                case 'ArrowUp': sendQuickCmd('forward'); break;
+                case 'ArrowDown': sendQuickCmd('backward'); break;
+                case 'ArrowLeft': sendQuickCmd('left'); break;
+                case 'ArrowRight': sendQuickCmd('right'); break;
+                case ' ': sendQuickCmd('stop'); e.preventDefault(); break;
+            }
+        });
+        
+        // Redraw bounding boxes on window resize
+        let lastDetections = null;
+        window.addEventListener('resize', () => {
+            if (lastDetections) {
+                const img = document.getElementById('robotFeed');
+                if (img.naturalWidth) {
+                    drawBoundingBoxes(lastDetections, img.naturalWidth, img.naturalHeight);
+                }
+            }
+        });
+        
+        // Store detections for resize redraw
+        const originalDrawBoundingBoxes = drawBoundingBoxes;
+        drawBoundingBoxes = function(detections, imgWidth, imgHeight) {
+            lastDetections = detections;
+            originalDrawBoundingBoxes(detections, imgWidth, imgHeight);
+        };
+        
+        // Start polling when page loads
+        startPolling();
     </script>
 </body>
 </html>
-
