@@ -12,14 +12,14 @@ while True:
 	message = "drive\n"
 	ser.write(message.encode())
 	print(f"sent message: {message}")
-	time.sleep(10)
+	time.sleep(5)
 
 	message = "turn left\n"
 	ser.write(message.encode())
 	print(f"sent message: {message}")
-	time.sleep(10)
+	time.sleep(5)
 
 	message = "turn right\n"
 	ser.write(message.encode())
 	print(f"sent message: {message}")
-	time.sleep(10)
+	time.sleep(5)
