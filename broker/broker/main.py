@@ -64,7 +64,7 @@ def start(
                     buffer.seek(0)
                     response = client.post(
                         f"{relay_server_address}/api/v1/actions",
-                        files={"image": ("frame.jpg", buffer, "image/jpeg")},
+                        files={"file": ("frame.jpg", buffer, "image/jpeg")},
                     )
                     if response.status_code == 200:
                         data = response.content
