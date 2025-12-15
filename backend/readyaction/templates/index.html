@@ -328,6 +328,7 @@
                     <div class="stats">
                         <span>📊 Frames: <b id="frameCount">0</b></span>
                         <span>🕐 Last update: <b id="lastUpdate">-</b></span>
+                        <span>📡 Polls: <b id="pollCount">0</b></span>
                     </div>
                     
                     <div class="poll-indicator active" id="pollIndicator">
@@ -404,8 +405,10 @@
         let pollInterval = null;
         let lastFrameTimestamp = 0;
         let frameCount = 0;
+        let pollCount = 0;
         let currentTargets = [];
         let latestFrameBase64 = null;  // Store latest frame for manual identify/detect
+        let isFetching = false;  // Prevent overlapping requests
         
         // Convert base64 to Blob for FormData
         function base64ToBlob(base64, mimeType = 'image/jpeg') {
@@ -534,24 +537,47 @@
             }
         }
         
-        // Start polling for frames
+        // Start polling for frames (200ms now that images are compressed)
         function startPolling() {
             pollInterval = setInterval(fetchFrame, 200);
         }
         
         async function fetchFrame() {
+            // Prevent overlapping requests (important for large payloads over slow networks)
+            if (isFetching) {
+                console.log('[fetch] Skipping - previous request still in progress');
+                return;
+            }
+            isFetching = true;
+            
             try {
+                pollCount++;
+                document.getElementById('pollCount').textContent = pollCount;
+                
                 // Add cache-busting parameter to prevent browser caching
                 const response = await fetch('/api/v1/frame?_t=' + Date.now());
                 const data = await response.json();
                 
-                if (data.success && data.timestamp !== lastFrameTimestamp) {
+                console.log('[fetch] poll #' + pollCount + ' success:', data.success, 'hasImage:', !!data.image, 'imageLen:', data.image?.length);
+                
+                if (data.success && data.image) {
+                    // Check if this is a new frame
+                    const isNewFrame = data.timestamp !== lastFrameTimestamp;
+                    if (isNewFrame) {
+                        frameCount++;
+                        console.log('[frame] New frame #' + frameCount + ', timestamp:', data.timestamp, ', size:', data.image.length);
+                    }
                     lastFrameTimestamp = data.timestamp;
-                    frameCount++;
                     latestFrameBase64 = data.image;  // Store for manual identify/detect
                     
                     const img = document.getElementById('robotFeed');
-                    img.src = 'data:image/jpeg;base64,' + data.image;
+                    const newSrc = 'data:image/jpeg;base64,' + data.image;
+                    
+                    // Add load/error handlers
+                    img.onerror = () => console.error('[frame] Image failed to load!');
+                    img.onload = () => console.log('[frame] Image loaded successfully');
+                    
+                    img.src = newSrc;
                     img.style.display = 'block';
                     document.getElementById('noFeed').style.display = 'none';
                     document.getElementById('feedStatus').textContent = 'Connected';
@@ -591,6 +617,8 @@
                 }
             } catch (error) {
                 console.error('Error fetching frame:', error);
+            } finally {
+                isFetching = false;
             }
         }
         

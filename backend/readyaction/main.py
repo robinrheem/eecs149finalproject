@@ -2,6 +2,7 @@ from fastapi import FastAPI, File, UploadFile, Request, Form, Response
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from openai import OpenAI
 from pathlib import Path
 from typing import Literal
@@ -14,6 +15,10 @@ import cv2
 import numpy as np
 
 app = FastAPI()
+
+# GZIP compression for responses (min 500 bytes to compress)
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,6 +53,31 @@ identified_targets: list[str] = []
 
 # Threshold for considering robot "centered" on the gap (in pixels from center)
 CENTER_THRESHOLD = 50  # Adjust based on camera resolution and desired precision
+
+# Image compression settings for web display
+MAX_IMAGE_WIDTH = 800  # Max width for browser display
+JPEG_QUALITY = 70  # JPEG quality (0-100, lower = smaller file)
+
+
+def compress_image_for_web(image_bytes: bytes) -> bytes:
+    """Compress image for efficient web transmission"""
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return image_bytes
+    
+    # Resize if too large
+    height, width = img.shape[:2]
+    if width > MAX_IMAGE_WIDTH:
+        scale = MAX_IMAGE_WIDTH / width
+        new_width = MAX_IMAGE_WIDTH
+        new_height = int(height * scale)
+        img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    
+    # Compress as JPEG
+    encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+    _, compressed = cv2.imencode('.jpg', img, encode_params)
+    return compressed.tobytes()
 
 SYSTEM_PROMPT = """You are a vision system for a robot car. Analyze the image and provide a brief description of what you see.
 Focus on objects, people, obstacles, and any relevant environmental details that would help the robot navigate or interact with its surroundings."""
@@ -301,8 +331,13 @@ async def analyze_image(
     try:
         image_bytes = await file.read()
         print(f"[actions] Received frame: {len(image_bytes)} bytes, mode={mode}")
-        robot_state["latest_frame"] = image_bytes
-        robot_state["latest_frame_base64"] = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Compress image for web display (keep original for processing)
+        compressed_bytes = compress_image_for_web(image_bytes)
+        print(f"[actions] Compressed for web: {len(compressed_bytes)} bytes ({100*len(compressed_bytes)//len(image_bytes)}%)")
+        
+        robot_state["latest_frame"] = image_bytes  # Keep original for processing
+        robot_state["latest_frame_base64"] = base64.b64encode(compressed_bytes).decode('utf-8')  # Compressed for web
         robot_state["frame_timestamp"] = time.time()
         print(f"[actions] Frame stored, timestamp={robot_state['frame_timestamp']}")
         nparr = np.frombuffer(image_bytes, np.uint8)
