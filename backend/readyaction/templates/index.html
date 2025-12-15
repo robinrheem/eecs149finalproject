@@ -593,6 +593,45 @@
                 let html = `<div class="timestamp">${timestamp} <span class="mode-tag detect">YOLO Detection</span></div>`;
                 html += `Found ${result.count} object(s)\n\n`;
                 
+                // Display action prominently
+                if (result.action) {
+                    const actionEmoji = {
+                        'drive': '🚗',
+                        'turn_left': '⬅️',
+                        'turn_right': '➡️',
+                        'stop': '🛑',
+                        'goal': '🎯'
+                    }[result.action] || '❓';
+                    html += `<b style="color: #88d3ce; font-size: 14px;">Action: ${actionEmoji} ${result.action.toUpperCase()}</b>\n`;
+                }
+                
+                // Display navigation status
+                if (result.navigation_status) {
+                    const statusColors = {
+                        'goal_reached': '#38ef7d',
+                        'navigating': '#ffd93d',
+                        'started': '#48dbfb',
+                        'waiting': '#f093fb',
+                        'no_gap_found': '#dc3545'
+                    };
+                    const statusColor = statusColors[result.navigation_status] || '#888';
+                    html += `<span style="color: ${statusColor};">Status: ${result.navigation_status.replace(/_/g, ' ')}</span>\n`;
+                }
+                
+                // Display reason if present
+                if (result.reason) {
+                    html += `<span style="color: #aaa; font-style: italic;">↳ ${result.reason}</span>\n`;
+                }
+                
+                // Display gap info if navigating
+                if (result.gap_info) {
+                    html += `\n<span style="color: #667eea;">Gap: ${result.gap_info.left_object} ← → ${result.gap_info.right_object}</span>\n`;
+                    const offset = result.gap_info.gap_center_x - result.gap_info.image_center_x;
+                    html += `<span style="color: #888;">Gap center offset: ${offset > 0 ? '+' : ''}${offset.toFixed(0)}px</span>\n`;
+                }
+                
+                html += '\n';
+                
                 if (result.target) {
                     html += `Target "${result.target}": ${result.target_found ? '✅ FOUND' : '❌ NOT FOUND'}\n`;
                     if (result.target_detections && result.target_detections.length > 0) {
