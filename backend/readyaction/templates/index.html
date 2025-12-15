@@ -139,6 +139,19 @@
             outline: none;
             border-color: #667eea;
         }
+        .input-group input[type="file"] {
+            padding: 10px;
+        }
+        .input-group input[type="file"]::file-selector-button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            cursor: pointer;
+            margin-right: 10px;
+            font-weight: 600;
+        }
         
         /* Buttons */
         .btn {
@@ -157,7 +170,15 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: #fff;
         }
-        .btn-primary:hover {
+        .btn-secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: #fff;
+        }
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: #fff;
+        }
+        .btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
         }
@@ -165,6 +186,14 @@
             opacity: 0.5;
             cursor: not-allowed;
             transform: none;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .btn-group .btn {
+            flex: 1;
         }
         
         /* Results */
@@ -197,52 +226,29 @@
             background: #ffd93d;
             color: #000;
         }
-        .result-box .mode-tag.reason {
-            background: #667eea;
+        .result-box .mode-tag.identify {
+            background: #f093fb;
             color: #fff;
         }
         
-        /* Command History */
-        .command-history {
-            max-height: 150px;
-            overflow-y: auto;
-        }
-        .command-item {
-            padding: 8px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 5px;
-            margin-bottom: 5px;
-            font-size: 12px;
-        }
-        .command-item .cmd {
-            color: #ffd93d;
-        }
-        .command-item .time {
-            color: #666;
-            font-size: 10px;
-        }
-        
-        /* Quick Commands */
-        .quick-commands {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
+        /* Target Tags */
+        .targets-display {
+            display: flex;
+            flex-wrap: wrap;
             gap: 8px;
-            margin-bottom: 15px;
+            margin-top: 10px;
         }
-        .quick-cmd {
-            padding: 10px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            color: #fff;
-            border-radius: 6px;
-            cursor: pointer;
+        .target-tag {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 6px 12px;
+            border-radius: 20px;
             font-size: 12px;
-            text-align: center;
-            transition: all 0.2s;
+            font-weight: 600;
         }
-        .quick-cmd:hover {
-            background: rgba(255,255,255,0.1);
-            border-color: rgba(255,255,255,0.2);
+        .no-targets {
+            color: #666;
+            font-style: italic;
+            font-size: 13px;
         }
         
         /* Polling indicator */
@@ -268,6 +274,33 @@
             display: flex;
             align-items: center;
             gap: 5px;
+        }
+
+        /* Status messages */
+        .status-message {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 13px;
+            display: none;
+        }
+        .status-message.success {
+            background: rgba(40, 167, 69, 0.2);
+            border: 1px solid #28a745;
+            color: #28a745;
+            display: block;
+        }
+        .status-message.error {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid #dc3545;
+            color: #dc3545;
+            display: block;
+        }
+        .status-message.loading {
+            background: rgba(102, 126, 234, 0.2);
+            border: 1px solid #667eea;
+            color: #667eea;
+            display: block;
         }
     </style>
 </head>
@@ -302,7 +335,7 @@
                     </div>
                 </div>
                 
-                <!-- Analysis Results (from robot's /api/v1/actions calls) -->
+                <!-- Analysis Results -->
                 <div class="panel" style="margin-top: 20px;">
                     <h2>🔍 Latest Analysis Result</h2>
                     <div class="result-box" id="resultBox">
@@ -311,55 +344,56 @@
                 </div>
             </div>
             
-            <!-- Right: Commands -->
+            <!-- Right: Target Controls -->
             <div>
-                <!-- Robot Commands -->
+                <!-- Current Targets -->
                 <div class="panel">
-                    <h2>🎮 Robot Commands</h2>
+                    <h2>🎯 Current YOLO Targets</h2>
+                    <p style="font-size: 12px; color: #888; margin-bottom: 10px;">
+                        These targets are used for object detection when the robot sends frames
+                    </p>
+                    <div class="targets-display" id="targetsDisplay">
+                        <span class="no-targets">No targets set</span>
+                    </div>
+                </div>
+
+                <!-- Manual Controls -->
+                <div class="panel" style="margin-top: 20px;">
+                    <h2>🛠️ Manual Controls</h2>
                     <p style="font-size: 12px; color: #888; margin-bottom: 15px;">
-                        Commands are queued and sent to robot when it calls /api/v1/actions
+                        Upload an image to test detection or let VLM identify targets
                     </p>
                     
-                    <div class="quick-commands">
-                        <button class="quick-cmd" onclick="sendQuickCmd('forward')">⬆️ Forward</button>
-                        <button class="quick-cmd" onclick="sendQuickCmd('backward')">⬇️ Backward</button>
-                        <button class="quick-cmd" onclick="sendQuickCmd('stop')">⏹️ Stop</button>
-                        <button class="quick-cmd" onclick="sendQuickCmd('left')">⬅️ Left</button>
-                        <button class="quick-cmd" onclick="sendQuickCmd('right')">➡️ Right</button>
-                        <button class="quick-cmd" onclick="sendQuickCmd('scan')">🔄 Scan</button>
+                    <div class="input-group">
+                        <label>Upload Test Image:</label>
+                        <input type="file" id="testImage" accept="image/*">
                     </div>
                     
                     <div class="input-group">
-                        <label>Custom Command:</label>
-                        <input type="text" id="customCommand" placeholder="e.g., find_object, navigate_to, etc.">
+                        <label>Override Targets (comma or | separated):</label>
+                        <input type="text" id="targetOverride" placeholder="e.g., person, cup, bottle">
                     </div>
                     
-                    <div class="input-group">
-                        <label>Prompt / Instructions (optional):</label>
-                        <textarea id="commandPrompt" placeholder="e.g., Find a red ball and move towards it..."></textarea>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" onclick="runIdentify()" id="identifyBtn">
+                            🧠 Identify
+                        </button>
+                        <button class="btn btn-success" onclick="runDetect()" id="detectBtn">
+                            👁️ Detect
+                        </button>
                     </div>
                     
-                    <button class="btn btn-primary" onclick="sendCustomCommand()" style="width: 100%;">
-                        📤 Send Command to Robot
-                    </button>
-                </div>
-                
-                <!-- Command History -->
-                <div class="panel" style="margin-top: 20px;">
-                    <h2>📜 Command History</h2>
-                    <div class="command-history" id="commandHistory">
-                        <div style="color: #666; text-align: center; padding: 20px;">No commands sent yet</div>
-                    </div>
+                    <div class="status-message" id="statusMessage"></div>
                 </div>
                 
                 <!-- Info -->
                 <div class="panel" style="margin-top: 20px;">
                     <h2>ℹ️ How It Works</h2>
                     <div style="font-size: 12px; color: #aaa; line-height: 1.6;">
-                        <p><b>Robot → Server:</b> POSTs to <code>/api/v1/actions</code> with image + mode (detect/reason)</p>
-                        <p style="margin-top: 8px;"><b>Server → Robot:</b> Returns analysis result + any pending commands</p>
-                        <p style="margin-top: 8px;"><b>Browser:</b> Polls <code>/api/v1/frame</code> to see what robot sees</p>
-                        <p style="margin-top: 8px;"><b>Keyboard:</b> Arrow keys = move, Space = stop</p>
+                        <p><b>🧠 Identify:</b> VLM analyzes the image and suggests YOLO targets</p>
+                        <p style="margin-top: 8px;"><b>👁️ Detect:</b> YOLO runs detection using current targets</p>
+                        <p style="margin-top: 8px;"><b>Override:</b> Type targets to manually set what YOLO looks for</p>
+                        <p style="margin-top: 8px;"><b>Robot flow:</b> Robot POSTs to <code>/api/v1/actions</code> with image</p>
                     </div>
                 </div>
             </div>
@@ -370,7 +404,7 @@
         let pollInterval = null;
         let lastFrameTimestamp = 0;
         let frameCount = 0;
-        const commandHistory = [];
+        let currentTargets = [];
         
         // Colors for different object classes
         const classColors = {
@@ -383,6 +417,10 @@
             'dog': '#ff9ff3',
             'cat': '#feca57',
             'bird': '#48dbfb',
+            'bottle': '#a29bfe',
+            'cup': '#fd79a8',
+            'laptop': '#00b894',
+            'cell phone': '#e17055',
             'default': '#00ff00'
         };
         
@@ -412,13 +450,11 @@
             let displayWidth, displayHeight, offsetX, offsetY;
             
             if (imageAspect > containerAspect) {
-                // Image is wider than container
                 displayWidth = canvas.width;
                 displayHeight = canvas.width / imageAspect;
                 offsetX = 0;
                 offsetY = (canvas.height - displayHeight) / 2;
             } else {
-                // Image is taller than container
                 displayHeight = canvas.height;
                 displayWidth = canvas.height * imageAspect;
                 offsetX = (canvas.width - displayWidth) / 2;
@@ -432,19 +468,23 @@
                 const color = getClassColor(det.class);
                 const [x, y, w, h] = det.box;
                 
-                // Scale coordinates to display size
                 const drawX = offsetX + x * scaleX;
                 const drawY = offsetY + y * scaleY;
                 const drawW = w * scaleX;
                 const drawH = h * scaleY;
                 
-                // Draw bounding box
+                // Highlight target matches
+                if (det.is_target) {
+                    ctx.strokeStyle = '#ff0';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(drawX - 2, drawY - 2, drawW + 4, drawH + 4);
+                }
+                
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 2;
                 ctx.strokeRect(drawX, drawY, drawW, drawH);
                 
-                // Draw label background
-                const label = `${det.class} ${(det.confidence * 100).toFixed(0)}%`;
+                const label = `${det.class} ${(det.confidence * 100).toFixed(0)}%${det.is_target ? ' ✓' : ''}`;
                 ctx.font = 'bold 12px Arial';
                 const textWidth = ctx.measureText(label).width;
                 const textHeight = 16;
@@ -452,10 +492,34 @@
                 ctx.fillStyle = color;
                 ctx.fillRect(drawX, drawY - textHeight, textWidth + 8, textHeight);
                 
-                // Draw label text
                 ctx.fillStyle = '#000';
                 ctx.fillText(label, drawX + 4, drawY - 4);
             });
+        }
+        
+        function updateTargetsDisplay(targets) {
+            currentTargets = targets || [];
+            const container = document.getElementById('targetsDisplay');
+            
+            if (currentTargets.length === 0) {
+                container.innerHTML = '<span class="no-targets">No targets set</span>';
+            } else {
+                container.innerHTML = currentTargets.map(t => 
+                    `<span class="target-tag">${t}</span>`
+                ).join('');
+            }
+        }
+        
+        function showStatus(message, type) {
+            const el = document.getElementById('statusMessage');
+            el.textContent = message;
+            el.className = 'status-message ' + type;
+            
+            if (type !== 'loading') {
+                setTimeout(() => {
+                    el.className = 'status-message';
+                }, 3000);
+            }
         }
         
         // Start polling for frames
@@ -472,7 +536,6 @@
                     lastFrameTimestamp = data.timestamp;
                     frameCount++;
                     
-                    // Update image
                     const img = document.getElementById('robotFeed');
                     img.src = 'data:image/jpeg;base64,' + data.image;
                     img.style.display = 'block';
@@ -480,27 +543,32 @@
                     document.getElementById('feedStatus').textContent = 'Connected';
                     document.getElementById('feedStatus').className = 'feed-status connected';
                     
-                    // Update stats
                     document.getElementById('frameCount').textContent = frameCount;
                     document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
                     
-                    // Update result if available
                     if (data.result) {
                         displayResult(data.result);
                         
-                        // Show mode indicator
                         const modeInd = document.getElementById('modeIndicator');
                         modeInd.style.display = 'block';
-                        modeInd.textContent = data.result.mode === 'detect' ? '👁️ YOLO' : '🧠 VLM';
+                        if (data.result.mode === 'detect') {
+                            modeInd.textContent = '👁️ YOLO';
+                        } else if (data.result.mode === 'identify') {
+                            modeInd.textContent = '🧠 VLM';
+                        }
                         
-                        // Draw bounding boxes for YOLO detections
+                        // Update targets display
+                        if (data.result.identified_targets) {
+                            updateTargetsDisplay(data.result.identified_targets);
+                        } else if (data.result.targets) {
+                            updateTargetsDisplay(data.result.targets);
+                        }
+                        
                         if (data.result.mode === 'detect' && data.result.detections) {
-                            // Wait for image to load to get dimensions
                             img.onload = () => {
                                 drawBoundingBoxes(data.result.detections, img.naturalWidth, img.naturalHeight);
                             };
                         } else {
-                            // Clear bounding boxes for VLM mode
                             const canvas = document.getElementById('bboxCanvas');
                             const ctx = canvas.getContext('2d');
                             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -526,85 +594,150 @@
                 html += `Found ${result.count} object(s)\n\n`;
                 
                 if (result.target) {
-                    html += `Target "${result.target}": ${result.target_found ? '✅ FOUND' : '❌ NOT FOUND'}\n\n`;
+                    html += `Target "${result.target}": ${result.target_found ? '✅ FOUND' : '❌ NOT FOUND'}\n`;
+                    if (result.target_detections && result.target_detections.length > 0) {
+                        html += `Target matches: ${result.target_detections.length}\n`;
+                    }
+                    html += '\n';
                 }
                 
                 if (result.detections) {
                     result.detections.forEach(det => {
-                        html += `• ${det.class}: ${(det.confidence * 100).toFixed(1)}%\n`;
+                        const marker = det.is_target ? ' ⭐' : '';
+                        html += `• ${det.class}: ${(det.confidence * 100).toFixed(1)}%${marker}\n`;
                     });
                 }
                 
                 box.innerHTML = html;
+            } else if (result.mode === 'identify') {
+                let html = `<div class="timestamp">${timestamp} <span class="mode-tag identify">VLM Identify</span></div>`;
+                html += `${result.response || 'No response'}\n\n`;
+                
+                if (result.targets && result.targets.length > 0) {
+                    html += `✅ Targets saved: ${result.targets.join(', ')}`;
+                } else {
+                    html += `⚠️ No targets extracted from response`;
+                }
+                
+                box.innerHTML = html;
             } else {
-                box.innerHTML = `<div class="timestamp">${timestamp} <span class="mode-tag reason">VLM Reasoning</span></div>${result.response || result.caption || 'No response'}`;
+                box.innerHTML = `<div class="timestamp">${timestamp}</div>${result.response || JSON.stringify(result, null, 2)}`;
             }
         }
         
-        async function sendQuickCmd(cmd) {
-            await sendCommand(cmd, null);
-        }
-        
-        async function sendCustomCommand() {
-            const cmd = document.getElementById('customCommand').value.trim();
-            const prompt = document.getElementById('commandPrompt').value.trim();
+        async function runIdentify() {
+            const fileInput = document.getElementById('testImage');
             
-            if (!cmd) {
-                alert('Please enter a command');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                showStatus('Please select an image first', 'error');
                 return;
             }
             
-            await sendCommand(cmd, prompt || null);
-            document.getElementById('customCommand').value = '';
-            document.getElementById('commandPrompt').value = '';
-        }
-        
-        async function sendCommand(command, prompt) {
+            const btn = document.getElementById('identifyBtn');
+            btn.disabled = true;
+            showStatus('Running VLM identification...', 'loading');
+            
             try {
-                const response = await fetch('/api/v1/commands', {
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                formData.append('mode', 'identify');
+                
+                const response = await fetch('/api/v1/actions', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command, prompt })
+                    body: formData
                 });
                 
                 const result = await response.json();
                 
                 if (result.success) {
-                    addToHistory(command, prompt);
+                    displayResult(result);
+                    if (result.targets) {
+                        updateTargetsDisplay(result.targets);
+                    }
+                    showStatus(`Identified ${result.targets?.length || 0} targets`, 'success');
+                    
+                    // Update the image display
+                    const img = document.getElementById('robotFeed');
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        img.src = e.target.result;
+                        img.style.display = 'block';
+                        document.getElementById('noFeed').style.display = 'none';
+                    };
+                    reader.readAsDataURL(fileInput.files[0]);
+                } else {
+                    showStatus('Error: ' + result.error, 'error');
                 }
             } catch (error) {
-                console.error('Error sending command:', error);
+                showStatus('Error: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
             }
         }
         
-        function addToHistory(command, prompt) {
-            commandHistory.unshift({ command, prompt, time: new Date() });
-            if (commandHistory.length > 20) commandHistory.pop();
+        async function runDetect() {
+            const fileInput = document.getElementById('testImage');
+            const targetInput = document.getElementById('targetOverride');
             
-            const container = document.getElementById('commandHistory');
-            container.innerHTML = commandHistory.map(item => `
-                <div class="command-item">
-                    <span class="cmd">${item.command}</span>
-                    ${item.prompt ? `<br><small style="color: #888;">${item.prompt}</small>` : ''}
-                    <div class="time">${item.time.toLocaleTimeString()}</div>
-                </div>
-            `).join('');
-        }
-        
-        // Keyboard shortcuts for commands
-        document.addEventListener('keydown', (e) => {
-            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+            if (!fileInput.files || fileInput.files.length === 0) {
+                showStatus('Please select an image first', 'error');
                 return;
             }
             
-            switch(e.key) {
-                case 'ArrowUp': sendQuickCmd('forward'); break;
-                case 'ArrowDown': sendQuickCmd('backward'); break;
-                case 'ArrowLeft': sendQuickCmd('left'); break;
-                case 'ArrowRight': sendQuickCmd('right'); break;
-                case ' ': sendQuickCmd('stop'); e.preventDefault(); break;
+            const btn = document.getElementById('detectBtn');
+            btn.disabled = true;
+            showStatus('Running YOLO detection...', 'loading');
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                formData.append('mode', 'detect');
+                
+                // Parse target override - support comma or pipe separator
+                const targetText = targetInput.value.trim();
+                if (targetText) {
+                    const targets = targetText.split(/[,|]/).map(t => t.trim()).filter(t => t);
+                    formData.append('target', targets.join('|'));
+                }
+                
+                const response = await fetch('/api/v1/actions', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayResult(result);
+                    if (result.identified_targets) {
+                        updateTargetsDisplay(result.identified_targets);
+                    }
+                    showStatus(`Found ${result.count} objects`, 'success');
+                    
+                    // Update the image display and draw boxes
+                    const img = document.getElementById('robotFeed');
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        img.src = e.target.result;
+                        img.style.display = 'block';
+                        document.getElementById('noFeed').style.display = 'none';
+                        
+                        img.onload = () => {
+                            if (result.detections) {
+                                drawBoundingBoxes(result.detections, img.naturalWidth, img.naturalHeight);
+                            }
+                        };
+                    };
+                    reader.readAsDataURL(fileInput.files[0]);
+                } else {
+                    showStatus('Error: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
             }
-        });
+        }
         
         // Redraw bounding boxes on window resize
         let lastDetections = null;
@@ -629,3 +762,4 @@
     </script>
 </body>
 </html>
+
