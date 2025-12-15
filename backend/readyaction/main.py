@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, Request, Form
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
@@ -35,11 +35,19 @@ robot_state = {
     "frame_timestamp": 0,
     "latest_result": None,
     "result_timestamp": 0,
+    # Navigation state for gap detection
+    "initial_objects": [],  # List of class names when navigation started
+    "is_navigating": False,
+    "gap_left_class": None,  # Class name of object on left side of gap
+    "gap_right_class": None,  # Class name of object on right side of gap
 }
-yolo_model: YOLO = YOLO("yolov8n.pt")
+yolo_model: YOLO = YOLO("yolo11s.pt")
 
 # Global state for identified targets from VLM
 identified_targets: list[str] = []
+
+# Threshold for considering robot "centered" on the gap (in pixels from center)
+CENTER_THRESHOLD = 50  # Adjust based on camera resolution and desired precision
 
 SYSTEM_PROMPT = """You are a vision system for a robot car. Analyze the image and provide a brief description of what you see.
 Focus on objects, people, obstacles, and any relevant environmental details that would help the robot navigate or interact with its surroundings."""
@@ -109,42 +117,6 @@ def detect_objects(image_bytes: bytes, target: str | None = None, conf_threshold
     return result
 
 
-def reason_about_image(image_bytes: bytes, system_prompt: str, prompt: str) -> dict:
-    """Use VLM to reason about the image"""
-    base64_image = base64.b64encode(image_bytes).decode('utf-8')
-    response = client.chat.completions.create(
-        model="gpt-4-vision-preview",
-        messages=[
-            {
-                "role": "system",
-                "content": system_prompt
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
-                    }
-                ]
-            }
-        ],
-        max_tokens=150
-    )
-    return {
-        "success": True,
-        "mode": "reason",
-        "response": response.choices[0].message.content,
-        "model": "SmolVLM-500M-Instruct"
-    }
-
-
 def parse_targets_from_response(response_text: str) -> list[str]:
     """Extract target list from VLM JSON response"""
     try:
@@ -164,12 +136,80 @@ def parse_targets_from_response(response_text: str) -> list[str]:
     return []
 
 
+def find_largest_gap(detections: list[dict]) -> dict | None:
+    """
+    Find the largest gap between detected objects.
+    
+    Returns a dict with:
+    - left_object: detection on the left side of gap
+    - right_object: detection on the right side of gap
+    - gap_center_x: x-coordinate of the gap center
+    - gap_width: width of the gap
+    """
+    if len(detections) < 2:
+        return None
+    # Sort detections by their center x-coordinate
+    sorted_detections = sorted(detections, key=lambda d: d["xyxy"][0] + (d["xyxy"][2] - d["xyxy"][0]) / 2)
+    # Find the largest gap between consecutive objects
+    largest_gap = None
+    largest_gap_width = 0
+    for i in range(len(sorted_detections) - 1):
+        left_obj = sorted_detections[i]
+        right_obj = sorted_detections[i + 1]
+        # Gap is from right edge of left object to left edge of right object
+        left_edge = left_obj["xyxy"][2]  # x2 of left object
+        right_edge = right_obj["xyxy"][0]  # x1 of right object
+        gap_width = right_edge - left_edge
+        if gap_width > largest_gap_width:
+            largest_gap_width = gap_width
+            largest_gap = {
+                "left_object": left_obj,
+                "right_object": right_obj,
+                "gap_center_x": (left_edge + right_edge) / 2,
+                "gap_width": gap_width,
+            }
+    return largest_gap
+
+
+def calculate_navigation_action(gap_info: dict, image_width: int = 640) -> str:
+    """
+    Calculate the navigation action based on gap position relative to image center.
+    
+    Returns: "drive", "turn_left", or "turn_right"
+    """
+    image_center_x = image_width / 2
+    gap_center_x = gap_info["gap_center_x"]
+    offset = gap_center_x - image_center_x
+    if abs(offset) <= CENTER_THRESHOLD:
+        # Centered on the gap, drive forward
+        return "drive"
+    elif offset > 0:
+        # Gap is to the right of center, robot view is tilted left
+        # Need to turn right to center the gap
+        return "turn_right"
+    else:
+        # Gap is to the left of center, robot view is tilted right
+        # Need to turn left to center the gap
+        return "turn_left"
+
+
+def check_initial_objects_present(current_detections: list[dict], initial_classes: list[str]) -> bool:
+    """
+    Check if any of the initial objects are still present in current detections.
+    """
+    current_classes = {d["class"].lower() for d in current_detections}
+    for initial_class in initial_classes:
+        if initial_class.lower() in current_classes:
+            return True
+    return False
+
+
 def identify_targets(image_bytes: bytes, system_prompt: str, prompt: str) -> dict:
     """Use VLM to identify objects and generate YOLO targets"""
     global identified_targets
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     response = client.chat.completions.create(
-        model="gpt-4-vision-preview",
+        model="SmolVLM-500M-Instruct",
         messages=[
             {
                 "role": "system",
@@ -225,18 +265,6 @@ async def get_latest_frame():
     return {"success": False, "error": "No frame available"}
 
 
-@app.get("/api/v1/frame.jpg")
-async def get_frame_image():
-    """Get latest frame as actual image (for img src)"""
-    if robot_state["latest_frame"]:
-        return Response(
-            content=robot_state["latest_frame"],
-            media_type="image/jpeg",
-            headers={"Cache-Control": "no-cache"}
-        )
-    return Response(status_code=404)
-
-
 @app.post("/api/v1/actions")
 async def analyze_image(
     file: UploadFile = File(...),
@@ -247,27 +275,122 @@ async def analyze_image(
 ):
     """
     Robot sends image here. Analyzes with YOLO or VLM, stores frame for browser.
+    Returns an action for the robot to execute.
+    
+    Actions:
+    - "stop": Default action, also returned in identify mode or on errors
+    - "drive": Robot is centered on gap, drive forward
+    - "turn_left": Robot view is tilted right, turn left to center
+    - "turn_right": Robot view is tilted left, turn right to center
+    - "goal": Initial objects no longer detected, navigation complete
     
     - file: Image from robot camera (required)
-    - mode: "detect" for YOLO object detection, "reason" for VLM, "identify" to find targets for YOLO
-    - system_prompt: Custom system prompt for VLM (mode=reason)
-    - prompt: Custom prompt for VLM (mode=reason)
+    - mode: "detect" for YOLO object detection with navigation, "identify" to find targets for YOLO
+    - system_prompt: Custom system prompt for VLM (mode=identify)
+    - prompt: Custom prompt for VLM (mode=identify)
     - target: Object to look for (mode=detect). If not provided, uses targets from last "identify" call
     """
-    image_bytes = await file.read()
-    robot_state["latest_frame"] = image_bytes
-    robot_state["latest_frame_base64"] = base64.b64encode(image_bytes).decode('utf-8')
-    robot_state["frame_timestamp"] = time.time()
-    if mode == "identify":
-        result = identify_targets(image_bytes, system_prompt, prompt)
-    elif mode == "detect":
-        if target:
-            identified_targets.clear()
-            identified_targets.extend([t.strip().lower() for t in target.split("|") if t.strip()])
-            result = detect_objects(image_bytes, target=target)
-        else:
-            result = detect_objects(image_bytes, target="|".join(identified_targets) if identified_targets else "")
-        result["identified_targets"] = identified_targets
-    robot_state["latest_result"] = result
-    robot_state["result_timestamp"] = time.time()
-    return JSONResponse(result)
+    action = "stop"
+    error_message = "Unknown error"
+    try:
+        image_bytes = await file.read()
+        robot_state["latest_frame"] = image_bytes
+        robot_state["latest_frame_base64"] = base64.b64encode(image_bytes).decode('utf-8')
+        robot_state["frame_timestamp"] = time.time()
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        image_width = img.shape[1] if img is not None else 640
+        if mode == "identify":
+            # Identify mode: detect objects with VLM and reset navigation state
+            result = identify_targets(image_bytes, system_prompt, prompt)
+            # Reset navigation state when identifying new targets
+            robot_state["initial_objects"] = []
+            robot_state["is_navigating"] = False
+            robot_state["gap_left_class"] = None
+            robot_state["gap_right_class"] = None
+            action = "stop"  # Always stop in identify mode
+        elif mode == "detect":
+            if target:
+                identified_targets.clear()
+                identified_targets.extend([t.strip().lower() for t in target.split("|") if t.strip()])
+                result = detect_objects(image_bytes, target=target)
+            else:
+                result = detect_objects(image_bytes, target="|".join(identified_targets) if identified_targets else "")
+            result["identified_targets"] = list(identified_targets)
+            detections = result.get("detections", [])
+            # If we're navigating, check if initial objects are still present
+            if robot_state["is_navigating"]:
+                initial_classes = robot_state["initial_objects"]
+                if not check_initial_objects_present(detections, initial_classes):
+                    # Initial objects no longer detected - goal reached!
+                    action = "goal"
+                    result["navigation_status"] = "goal_reached"
+                    result["reason"] = "Initial objects no longer in view"
+                    # Reset navigation state
+                    robot_state["is_navigating"] = False
+                else:
+                    # Still navigating - calculate action based on gap
+                    gap_info = find_largest_gap(detections, image_width)
+                    if gap_info:
+                        action = calculate_navigation_action(gap_info, image_width)
+                        result["gap_info"] = {
+                            "left_object": gap_info["left_object"]["class"],
+                            "right_object": gap_info["right_object"]["class"],
+                            "gap_center_x": gap_info["gap_center_x"],
+                            "gap_width": gap_info["gap_width"],
+                            "image_center_x": image_width / 2,
+                        }
+                        result["navigation_status"] = "navigating"
+                    else:
+                        # Not enough objects to find a gap
+                        action = "stop"
+                        result["navigation_status"] = "no_gap_found"
+                        result["reason"] = "Need at least 2 objects to find a gap"
+            else:
+                # Not navigating yet - start navigation if we detect objects
+                if len(detections) >= 2:
+                    # Start navigation
+                    gap_info = find_largest_gap(detections, image_width)
+                    if gap_info:
+                        # Store initial objects for goal detection
+                        robot_state["initial_objects"] = list(set(d["class"].lower() for d in detections))
+                        robot_state["is_navigating"] = True
+                        robot_state["gap_left_class"] = gap_info["left_object"]["class"]
+                        robot_state["gap_right_class"] = gap_info["right_object"]["class"]
+                        action = calculate_navigation_action(gap_info, image_width)
+                        result["gap_info"] = {
+                            "left_object": gap_info["left_object"]["class"],
+                            "right_object": gap_info["right_object"]["class"],
+                            "gap_center_x": gap_info["gap_center_x"],
+                            "gap_width": gap_info["gap_width"],
+                            "image_center_x": image_width / 2,
+                        }
+                        result["navigation_status"] = "started"
+                    else:
+                        action = "stop"
+                        result["navigation_status"] = "no_gap_found"
+                else:
+                    action = "stop"
+                    result["navigation_status"] = "waiting"
+                    result["reason"] = f"Need at least 2 objects, found {len(detections)}"
+        result["action"] = action
+        result["navigation_state"] = {
+            "is_navigating": robot_state["is_navigating"],
+            "initial_objects": robot_state["initial_objects"],
+            "gap_left_class": robot_state["gap_left_class"],
+            "gap_right_class": robot_state["gap_right_class"],
+        }
+        robot_state["latest_result"] = result
+        robot_state["result_timestamp"] = time.time()
+        return JSONResponse(result)
+    except Exception as e:
+        error_message = str(e)
+        result = {
+            "success": False,
+            "error": error_message,
+            "action": "stop",
+            "mode": mode,
+        }
+        robot_state["latest_result"] = result
+        robot_state["result_timestamp"] = time.time()
+        return JSONResponse(result)
