@@ -541,7 +541,8 @@
         
         async function fetchFrame() {
             try {
-                const response = await fetch('/api/v1/frame');
+                // Add cache-busting parameter to prevent browser caching
+                const response = await fetch('/api/v1/frame?_t=' + Date.now());
                 const data = await response.json();
                 
                 if (data.success && data.timestamp !== lastFrameTimestamp) {

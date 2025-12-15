@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Request, Form
+from fastapi import FastAPI, File, UploadFile, Request, Form, Response
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -253,8 +253,13 @@ async def root(request: Request):
 
 
 @app.get("/api/v1/frame")
-async def get_latest_frame():
+async def get_latest_frame(response: Response):
     """Browser polls for latest frame (as JSON with base64)"""
+    # Prevent caching so all clients get fresh data
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    
     if robot_state["latest_frame_base64"]:
         return {
             "success": True,
