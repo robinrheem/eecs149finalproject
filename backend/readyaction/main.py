@@ -262,6 +262,7 @@ async def get_latest_frame():
             "timestamp": robot_state["frame_timestamp"],
             "result": robot_state["latest_result"]
         }
+    print("[frame] No frame available yet")
     return {"success": False, "error": "No frame available"}
 
 
@@ -294,9 +295,11 @@ async def analyze_image(
     error_message = "Unknown error"
     try:
         image_bytes = await file.read()
+        print(f"[actions] Received frame: {len(image_bytes)} bytes, mode={mode}")
         robot_state["latest_frame"] = image_bytes
         robot_state["latest_frame_base64"] = base64.b64encode(image_bytes).decode('utf-8')
         robot_state["frame_timestamp"] = time.time()
+        print(f"[actions] Frame stored, timestamp={robot_state['frame_timestamp']}")
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         image_width = img.shape[1] if img is not None else 640
@@ -330,7 +333,7 @@ async def analyze_image(
                     robot_state["is_navigating"] = False
                 else:
                     # Still navigating - calculate action based on gap
-                    gap_info = find_largest_gap(detections, image_width)
+                    gap_info = find_largest_gap(detections)
                     if gap_info:
                         action = calculate_navigation_action(gap_info, image_width)
                         result["gap_info"] = {
@@ -350,7 +353,7 @@ async def analyze_image(
                 # Not navigating yet - start navigation if we detect objects
                 if len(detections) >= 2:
                     # Start navigation
-                    gap_info = find_largest_gap(detections, image_width)
+                    gap_info = find_largest_gap(detections)
                     if gap_info:
                         # Store initial objects for goal detection
                         robot_state["initial_objects"] = list(set(d["class"].lower() for d in detections))
@@ -385,6 +388,9 @@ async def analyze_image(
         return JSONResponse(result)
     except Exception as e:
         error_message = str(e)
+        print(f"[actions] ERROR: {error_message}")
+        import traceback
+        traceback.print_exc()
         result = {
             "success": False,
             "error": error_message,

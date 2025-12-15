@@ -361,11 +361,11 @@
                 <div class="panel" style="margin-top: 20px;">
                     <h2>🛠️ Manual Controls</h2>
                     <p style="font-size: 12px; color: #888; margin-bottom: 15px;">
-                        Upload an image to test detection or let VLM identify targets
+                        Uses robot camera feed automatically, or upload an image to override
                     </p>
                     
                     <div class="input-group">
-                        <label>Upload Test Image:</label>
+                        <label>Upload Test Image (optional - uses robot feed if empty):</label>
                         <input type="file" id="testImage" accept="image/*">
                     </div>
                     
@@ -392,8 +392,8 @@
                     <div style="font-size: 12px; color: #aaa; line-height: 1.6;">
                         <p><b>🧠 Identify:</b> VLM analyzes the image and suggests YOLO targets</p>
                         <p style="margin-top: 8px;"><b>👁️ Detect:</b> YOLO runs detection using current targets</p>
+                        <p style="margin-top: 8px;"><b>📷 Auto-feed:</b> Buttons use robot camera feed if no file uploaded</p>
                         <p style="margin-top: 8px;"><b>Override:</b> Type targets to manually set what YOLO looks for</p>
-                        <p style="margin-top: 8px;"><b>Robot flow:</b> Robot POSTs to <code>/api/v1/actions</code> with image</p>
                     </div>
                 </div>
             </div>
@@ -405,6 +405,18 @@
         let lastFrameTimestamp = 0;
         let frameCount = 0;
         let currentTargets = [];
+        let latestFrameBase64 = null;  // Store latest frame for manual identify/detect
+        
+        // Convert base64 to Blob for FormData
+        function base64ToBlob(base64, mimeType = 'image/jpeg') {
+            const byteCharacters = atob(base64);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            return new Blob([byteArray], { type: mimeType });
+        }
         
         // Colors for different object classes
         const classColors = {
@@ -535,6 +547,7 @@
                 if (data.success && data.timestamp !== lastFrameTimestamp) {
                     lastFrameTimestamp = data.timestamp;
                     frameCount++;
+                    latestFrameBase64 = data.image;  // Store for manual identify/detect
                     
                     const img = document.getElementById('robotFeed');
                     img.src = 'data:image/jpeg;base64,' + data.image;
@@ -666,9 +679,11 @@
         
         async function runIdentify() {
             const fileInput = document.getElementById('testImage');
+            const hasUploadedFile = fileInput.files && fileInput.files.length > 0;
             
-            if (!fileInput.files || fileInput.files.length === 0) {
-                showStatus('Please select an image first', 'error');
+            // Use uploaded file or fall back to robot camera feed
+            if (!hasUploadedFile && !latestFrameBase64) {
+                showStatus('No image available - upload one or wait for robot feed', 'error');
                 return;
             }
             
@@ -678,7 +693,14 @@
             
             try {
                 const formData = new FormData();
-                formData.append('file', fileInput.files[0]);
+                
+                if (hasUploadedFile) {
+                    formData.append('file', fileInput.files[0]);
+                } else {
+                    // Use the latest robot camera feed
+                    const blob = base64ToBlob(latestFrameBase64);
+                    formData.append('file', blob, 'robot_frame.jpg');
+                }
                 formData.append('mode', 'identify');
                 
                 const response = await fetch('/api/v1/actions', {
@@ -695,15 +717,17 @@
                     }
                     showStatus(`Identified ${result.targets?.length || 0} targets`, 'success');
                     
-                    // Update the image display
-                    const img = document.getElementById('robotFeed');
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        img.src = e.target.result;
-                        img.style.display = 'block';
-                        document.getElementById('noFeed').style.display = 'none';
-                    };
-                    reader.readAsDataURL(fileInput.files[0]);
+                    // Update the image display only if using uploaded file
+                    if (hasUploadedFile) {
+                        const img = document.getElementById('robotFeed');
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            img.src = e.target.result;
+                            img.style.display = 'block';
+                            document.getElementById('noFeed').style.display = 'none';
+                        };
+                        reader.readAsDataURL(fileInput.files[0]);
+                    }
                 } else {
                     showStatus('Error: ' + result.error, 'error');
                 }
@@ -717,9 +741,11 @@
         async function runDetect() {
             const fileInput = document.getElementById('testImage');
             const targetInput = document.getElementById('targetOverride');
+            const hasUploadedFile = fileInput.files && fileInput.files.length > 0;
             
-            if (!fileInput.files || fileInput.files.length === 0) {
-                showStatus('Please select an image first', 'error');
+            // Use uploaded file or fall back to robot camera feed
+            if (!hasUploadedFile && !latestFrameBase64) {
+                showStatus('No image available - upload one or wait for robot feed', 'error');
                 return;
             }
             
@@ -729,7 +755,14 @@
             
             try {
                 const formData = new FormData();
-                formData.append('file', fileInput.files[0]);
+                
+                if (hasUploadedFile) {
+                    formData.append('file', fileInput.files[0]);
+                } else {
+                    // Use the latest robot camera feed
+                    const blob = base64ToBlob(latestFrameBase64);
+                    formData.append('file', blob, 'robot_frame.jpg');
+                }
                 formData.append('mode', 'detect');
                 
                 // Parse target override - support comma or pipe separator
@@ -753,21 +786,29 @@
                     }
                     showStatus(`Found ${result.count} objects`, 'success');
                     
-                    // Update the image display and draw boxes
+                    // Draw bounding boxes on the current feed
                     const img = document.getElementById('robotFeed');
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        img.src = e.target.result;
-                        img.style.display = 'block';
-                        document.getElementById('noFeed').style.display = 'none';
-                        
-                        img.onload = () => {
-                            if (result.detections) {
-                                drawBoundingBoxes(result.detections, img.naturalWidth, img.naturalHeight);
-                            }
+                    if (hasUploadedFile) {
+                        // Update the image display for uploaded file
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            img.src = e.target.result;
+                            img.style.display = 'block';
+                            document.getElementById('noFeed').style.display = 'none';
+                            
+                            img.onload = () => {
+                                if (result.detections) {
+                                    drawBoundingBoxes(result.detections, img.naturalWidth, img.naturalHeight);
+                                }
+                            };
                         };
-                    };
-                    reader.readAsDataURL(fileInput.files[0]);
+                        reader.readAsDataURL(fileInput.files[0]);
+                    } else {
+                        // Draw boxes on existing robot feed
+                        if (result.detections && img.naturalWidth) {
+                            drawBoundingBoxes(result.detections, img.naturalWidth, img.naturalHeight);
+                        }
+                    }
                 } else {
                     showStatus('Error: ' + result.error, 'error');
                 }
