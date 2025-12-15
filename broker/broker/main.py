@@ -79,7 +79,7 @@ def start(
                         files={"file": ("frame.jpg", buffer, "image/jpeg")},
                     ).json()
                     action = f"{response['action']}\n"
-                    ser.write(action)
+                    ser.write(action.encode())
                 except Exception as e:
                     print(f"[red]✗[/red] Error: {e}")
                 time.sleep(interval_seconds)
