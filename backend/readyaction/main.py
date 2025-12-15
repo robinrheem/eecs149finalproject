@@ -24,7 +24,7 @@ app.add_middleware(
 templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
 client = OpenAI(
-    base_url="http://localhost:8080/v1",
+    base_url="http://localhost:4545/v1",
     api_key=""
 )
 
