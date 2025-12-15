@@ -77,13 +77,9 @@ def start(
                     response = client.post(
                         f"{relay_server_address}/api/v1/actions",
                         files={"file": ("frame.jpg", buffer, "image/jpeg")},
-                    )
-                    if response.status_code == 200:
-                        data = response.content
-                        ser.write(data)
-                        print(f"[green]✓[/green] Frame sent, wrote {len(data)} bytes to serial")
-                    else:
-                        print(f"[yellow]![/yellow] Server responded: {response.status_code}")
+                    ).json()
+                    action = f"{response['action']}\n"
+                    ser.write(action)
                 except Exception as e:
                     print(f"[red]✗[/red] Error: {e}")
                 time.sleep(interval_seconds)
