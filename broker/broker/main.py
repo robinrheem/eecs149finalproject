@@ -1,7 +1,5 @@
 from io import BytesIO
-from pathlib import Path
 import random
-import subprocess
 import time
 from typing import Annotated
 import typer
@@ -56,7 +54,11 @@ def start(
     print("[green]✓[/green] Serial port opened")
     print("[blue]→[/blue] Initializing camera...")
     camera = Picamera2()
-    camera.configure(camera.create_still_configuration())
+    config = camera.create_video_configuration(
+        main={"size": (640, 480), "format": "RGB888"},
+        buffer_count=2,
+    )
+    camera.configure(config)
     camera.start()
     print("[green]✓[/green] Camera initialized")
     interval_seconds = interval / 1000.0
@@ -72,7 +74,7 @@ def start(
                         time.sleep(interval_seconds)
                         continue
                     buffer = BytesIO()
-                    camera.capture_file(buffer, format="jpeg")
+                    camera.capture_file(buffer, format="jpeg", quality=50)
                     buffer.seek(0)
                     response = client.post(
                         f"{relay_server_address}/api/v1/actions",
@@ -80,6 +82,7 @@ def start(
                     ).json()
                     action = f"{response['action']}\n"
                     ser.write(action.encode())
+                    print(f"[green]✓[/green] Action: {response['action']}")
                 except Exception as e:
                     print(f"[red]✗[/red] Error: {e}")
                 time.sleep(interval_seconds)
