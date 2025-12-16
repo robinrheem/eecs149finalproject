@@ -58,6 +58,38 @@ CENTER_THRESHOLD = 50  # Adjust based on camera resolution and desired precision
 MAX_IMAGE_WIDTH = 800  # Max width for browser display
 JPEG_QUALITY = 70  # JPEG quality (0-100, lower = smaller file)
 
+# Camera orientation fix (Raspberry Pi camera often needs rotation)
+# Options: 0 = no rotation, 90, 180, 270 (degrees clockwise)
+CAMERA_ROTATION = 270  # Rotate 270° clockwise (same as 90° counter-clockwise)
+
+
+def fix_camera_orientation(img: np.ndarray) -> np.ndarray:
+    """Fix camera orientation based on CAMERA_ROTATION setting"""
+    if CAMERA_ROTATION == 0:
+        return img
+    elif CAMERA_ROTATION == 90:
+        return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    elif CAMERA_ROTATION == 180:
+        return cv2.rotate(img, cv2.ROTATE_180)
+    elif CAMERA_ROTATION == 270 or CAMERA_ROTATION == -90:
+        return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return img
+
+
+def correct_image_orientation(image_bytes: bytes) -> bytes:
+    """Apply rotation fix to raw image bytes"""
+    if CAMERA_ROTATION == 0:
+        return image_bytes
+    
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return image_bytes
+    
+    img = fix_camera_orientation(img)
+    _, corrected = cv2.imencode('.jpg', img)
+    return corrected.tobytes()
+
 
 def compress_image_for_web(image_bytes: bytes) -> bytes:
     """Compress image for efficient web transmission"""
@@ -329,12 +361,17 @@ async def analyze_image(
     action = "stop"
     error_message = "Unknown error"
     try:
-        image_bytes = await file.read()
-        print(f"[actions] Received frame: {len(image_bytes)} bytes, mode={mode}")
+        raw_image_bytes = await file.read()
+        print(f"[actions] Received frame: {len(raw_image_bytes)} bytes, mode={mode}")
         
-        # Compress image for web display (keep original for processing)
+        # Fix camera orientation first (before any processing)
+        image_bytes = correct_image_orientation(raw_image_bytes)
+        if CAMERA_ROTATION != 0:
+            print(f"[actions] Applied {CAMERA_ROTATION}° rotation")
+        
+        # Compress image for web display (keep corrected original for processing)
         compressed_bytes = compress_image_for_web(image_bytes)
-        print(f"[actions] Compressed for web: {len(compressed_bytes)} bytes ({100*len(compressed_bytes)//len(image_bytes)}%)")
+        print(f"[actions] Compressed for web: {len(compressed_bytes)} bytes ({100*len(compressed_bytes)//len(raw_image_bytes)}%)")
         
         robot_state["latest_frame"] = image_bytes  # Keep original for processing
         robot_state["latest_frame_base64"] = base64.b64encode(compressed_bytes).decode('utf-8')  # Compressed for web
