@@ -6,7 +6,6 @@ import typer
 from rich import print
 import httpx
 import serial
-from PIL import Image
 
 app = typer.Typer()
 
@@ -78,12 +77,9 @@ def start(
                         if interval_seconds > 0:
                             time.sleep(interval_seconds)
                         continue
-                    # Capture directly to numpy array (faster than capture_file)
-                    frame = camera.capture_array()
                     # Encode to JPEG in memory
-                    img = Image.fromarray(frame)
                     buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=85)
+                    camera.capture_file(buffer, format="jpeg")
                     buffer.seek(0)
                     response = client.post(
                         f"{relay_server_address}/api/v1/actions",
