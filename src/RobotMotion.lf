@@ -107,8 +107,8 @@ main reactor {
                         lf_set(d.line0, "Command: DRIVE");
 
                         // set speeds and target distance
-                        self->l_speed = 0.4f;
-                        self->r_speed = 0.4f;
+                        self->l_speed = 0.1f;
+                        self->r_speed = 0.1f;
 
                         // drive for an arbitrary distance (encoder ticks)
                         self->target_ticks = 1000.0f;   
@@ -120,8 +120,8 @@ main reactor {
                     } else if (strcmp(self->buf, "turn_left") == 0) {
                         lf_set(d.line0, "Command: TURN L");
 
-                        self->l_speed = -0.4f;  // counter-clockwise
-                        self->r_speed =  0.4f;
+                        self->l_speed = -0.1f;  // counter-clockwise
+                        self->r_speed =  0.1f;
 
                         self->start_angle = self->current_yaw;
                         self->target_angle_delta = 30.0f;   // 30-degree left turn
@@ -132,8 +132,8 @@ main reactor {
                     } else if (strcmp(self->buf, "turn_right") == 0) {
                         lf_set(d.line0, "Command: TURN R");
 
-                        self->l_speed =  0.4f;  // clockwise
-                        self->r_speed = -0.4f;
+                        self->l_speed =  0.1f;  // clockwise
+                        self->r_speed = -0.1f;
 
                         self->start_angle = self->current_yaw;
                         self->target_angle_delta = -30.0f;  // 30-degree right turn
@@ -144,8 +144,8 @@ main reactor {
                     } else if (strcmp(self->buf, "goal") == 0) {
                         lf_set(d.line0, "Command: GOAL");
 
-                        self->l_speed =  0.4; 
-                        self->r_speed = 0.4f;
+                        self->l_speed = 0.1f; 
+                        self->r_speed = 0.1f;
 
                         lf_set_mode(GOAL);
                         return;
@@ -153,7 +153,7 @@ main reactor {
                     } else if (strcmp(self->buf, "stop") == 0) {
                         lf_set(d.line0, "Command: STOP");
 
-                        self->l_speed =  0.0f;  
+                        self->l_speed = 0.0f;  
                         self->r_speed = 0.0f;
 
                         lf_set_mode(STOP);
@@ -241,15 +241,8 @@ main reactor {
 
     mode STOP {
         reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left, m.right, m.left_speed, m.right_speed, d.line0 {=
-            lf_set(m.left, e.left->value);
-            lf_set(m.right, e.right->value);
-
-            // Apply commanded turning speeds
-            lf_set(m.left_speed, self->l_speed);
-            lf_set(m.right_speed, self->r_speed);
-
-            // Compute yaw difference since we started turning
-            float delta = self->current_yaw - self->start_angle;
+            lf_set(m.left, 0);
+            lf_set(m.right, 0);
 
             lf_set(m.left_speed, 0.0f);
             lf_set(m.right_speed, 0.0f);
