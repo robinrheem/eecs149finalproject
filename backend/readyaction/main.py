@@ -437,6 +437,9 @@ async def analyze_image(
                             "gap_center_x": gap_info["gap_center_x"],
                             "gap_width": gap_info["gap_width"],
                             "image_center_x": image_width / 2,
+                            # Include boundary coordinates for visualization
+                            "gap_left_edge_x": gap_info["left_object"]["xyxy"][2],  # x2 of left object
+                            "gap_right_edge_x": gap_info["right_object"]["xyxy"][0],  # x1 of right object
                         }
                         result["navigation_status"] = "navigating"
                     else:
@@ -478,6 +481,9 @@ async def analyze_image(
                             "gap_center_x": gap_info["gap_center_x"],
                             "gap_width": gap_info["gap_width"],
                             "image_center_x": image_width / 2,
+                            # Include boundary coordinates for visualization
+                            "gap_left_edge_x": gap_info["left_object"]["xyxy"][2],  # x2 of left object
+                            "gap_right_edge_x": gap_info["right_object"]["xyxy"][0],  # x1 of right object
                         }
                         result["navigation_status"] = "started"
                     else:

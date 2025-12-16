@@ -443,7 +443,10 @@
             return classColors[className.toLowerCase()] || classColors['default'];
         }
         
-        function drawBoundingBoxes(detections, imgWidth, imgHeight) {
+        // Store gap info for drawing
+        let currentGapInfo = null;
+        
+        function drawBoundingBoxes(detections, imgWidth, imgHeight, gapInfo = null) {
             const canvas = document.getElementById('bboxCanvas');
             const img = document.getElementById('robotFeed');
             const ctx = canvas.getContext('2d');
@@ -455,8 +458,6 @@
             
             // Clear previous drawings
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            if (!detections || detections.length === 0) return;
             
             // Calculate scale factors (image is object-fit: contain)
             const containerAspect = canvas.width / canvas.height;
@@ -479,37 +480,153 @@
             const scaleX = displayWidth / imgWidth;
             const scaleY = displayHeight / imgHeight;
             
-            detections.forEach(det => {
-                const color = getClassColor(det.class);
-                const [x, y, w, h] = det.box;
+            // Draw image center line (robot's current view center)
+            const imageCenterX = offsetX + (imgWidth / 2) * scaleX;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([8, 8]);
+            ctx.beginPath();
+            ctx.moveTo(imageCenterX, offsetY);
+            ctx.lineTo(imageCenterX, offsetY + displayHeight);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw image center label
+            ctx.font = 'bold 11px Arial';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.fillText('CENTER', imageCenterX - 25, offsetY + 15);
+            
+            // Draw gap visualization if gap info is available
+            if (gapInfo && gapInfo.gap_center_x !== undefined) {
+                const gapCenterScreenX = offsetX + gapInfo.gap_center_x * scaleX;
                 
-                const drawX = offsetX + x * scaleX;
-                const drawY = offsetY + y * scaleY;
-                const drawW = w * scaleX;
-                const drawH = h * scaleY;
+                // Use boundary coordinates from backend if available, otherwise calculate
+                let leftEdgeX = null;
+                let rightEdgeX = null;
                 
-                // Highlight target matches
-                if (det.is_target) {
-                    ctx.strokeStyle = '#ff0';
-                    ctx.lineWidth = 4;
-                    ctx.strokeRect(drawX - 2, drawY - 2, drawW + 4, drawH + 4);
+                if (gapInfo.gap_left_edge_x !== undefined && gapInfo.gap_right_edge_x !== undefined) {
+                    // Use coordinates directly from backend
+                    leftEdgeX = offsetX + gapInfo.gap_left_edge_x * scaleX;
+                    rightEdgeX = offsetX + gapInfo.gap_right_edge_x * scaleX;
+                } else if (detections && detections.length >= 2) {
+                    // Fallback: Find objects that match the gap boundaries
+                    const sortedDets = [...detections].sort((a, b) => {
+                        const aCenterX = a.xyxy[0] + (a.xyxy[2] - a.xyxy[0]) / 2;
+                        const bCenterX = b.xyxy[0] + (b.xyxy[2] - b.xyxy[0]) / 2;
+                        return aCenterX - bCenterX;
+                    });
+                    
+                    // Find the gap between objects
+                    for (let i = 0; i < sortedDets.length - 1; i++) {
+                        const leftObj = sortedDets[i];
+                        const rightObj = sortedDets[i + 1];
+                        const gapLeftEdge = leftObj.xyxy[2]; // x2 of left object
+                        const gapRightEdge = rightObj.xyxy[0]; // x1 of right object
+                        const currentGapCenter = (gapLeftEdge + gapRightEdge) / 2;
+                        
+                        // Check if this is the gap we're navigating through
+                        if (Math.abs(currentGapCenter - gapInfo.gap_center_x) < 10) {
+                            leftEdgeX = offsetX + gapLeftEdge * scaleX;
+                            rightEdgeX = offsetX + gapRightEdge * scaleX;
+                            break;
+                        }
+                    }
                 }
                 
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 2;
-                ctx.strokeRect(drawX, drawY, drawW, drawH);
+                // Draw gap shaded area
+                if (leftEdgeX !== null && rightEdgeX !== null) {
+                    ctx.fillStyle = 'rgba(56, 239, 125, 0.15)';
+                    ctx.fillRect(leftEdgeX, offsetY, rightEdgeX - leftEdgeX, displayHeight);
+                    
+                    // Draw gap boundaries
+                    ctx.strokeStyle = 'rgba(56, 239, 125, 0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(leftEdgeX, offsetY);
+                    ctx.lineTo(leftEdgeX, offsetY + displayHeight);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(rightEdgeX, offsetY);
+                    ctx.lineTo(rightEdgeX, offsetY + displayHeight);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
                 
-                const label = `${det.class} ${(det.confidence * 100).toFixed(0)}%${det.is_target ? ' ✓' : ''}`;
+                // Draw gap center line (target)
+                ctx.strokeStyle = '#38ef7d';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(gapCenterScreenX, offsetY);
+                ctx.lineTo(gapCenterScreenX, offsetY + displayHeight);
+                ctx.stroke();
+                
+                // Draw gap center marker (triangle pointing down)
+                ctx.fillStyle = '#38ef7d';
+                ctx.beginPath();
+                ctx.moveTo(gapCenterScreenX, offsetY + 25);
+                ctx.lineTo(gapCenterScreenX - 10, offsetY + 5);
+                ctx.lineTo(gapCenterScreenX + 10, offsetY + 5);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Draw "GAP" label
                 ctx.font = 'bold 12px Arial';
-                const textWidth = ctx.measureText(label).width;
-                const textHeight = 16;
+                ctx.fillStyle = '#38ef7d';
+                const gapLabel = 'GAP TARGET';
+                const gapLabelWidth = ctx.measureText(gapLabel).width;
+                ctx.fillText(gapLabel, gapCenterScreenX - gapLabelWidth / 2, offsetY + displayHeight - 10);
                 
-                ctx.fillStyle = color;
-                ctx.fillRect(drawX, drawY - textHeight, textWidth + 8, textHeight);
-                
-                ctx.fillStyle = '#000';
-                ctx.fillText(label, drawX + 4, drawY - 4);
-            });
+                // Draw arrow showing direction to turn
+                const offset = gapInfo.gap_center_x - (imgWidth / 2);
+                if (Math.abs(offset) > 50) { // CENTER_THRESHOLD
+                    const arrowY = offsetY + displayHeight / 2;
+                    ctx.fillStyle = offset > 0 ? '#ffd93d' : '#ffd93d';
+                    ctx.font = 'bold 24px Arial';
+                    if (offset > 0) {
+                        // Gap is to the right, need to turn right
+                        ctx.fillText('→', imageCenterX + 20, arrowY);
+                    } else {
+                        // Gap is to the left, need to turn left
+                        ctx.fillText('←', imageCenterX - 40, arrowY);
+                    }
+                }
+            }
+            
+            // Draw bounding boxes for detections
+            if (detections && detections.length > 0) {
+                detections.forEach(det => {
+                    const color = getClassColor(det.class);
+                    const [x, y, w, h] = det.box;
+                    
+                    const drawX = offsetX + x * scaleX;
+                    const drawY = offsetY + y * scaleY;
+                    const drawW = w * scaleX;
+                    const drawH = h * scaleY;
+                    
+                    // Highlight target matches
+                    if (det.is_target) {
+                        ctx.strokeStyle = '#ff0';
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(drawX - 2, drawY - 2, drawW + 4, drawH + 4);
+                    }
+                    
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(drawX, drawY, drawW, drawH);
+                    
+                    const label = `${det.class} ${(det.confidence * 100).toFixed(0)}%${det.is_target ? ' ✓' : ''}`;
+                    ctx.font = 'bold 12px Arial';
+                    const textWidth = ctx.measureText(label).width;
+                    const textHeight = 16;
+                    
+                    ctx.fillStyle = color;
+                    ctx.fillRect(drawX, drawY - textHeight, textWidth + 8, textHeight);
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.fillText(label, drawX + 4, drawY - 4);
+                });
+            }
         }
         
         function updateTargetsDisplay(targets) {
@@ -609,14 +726,17 @@
                             // YOLO coordinates are from original, but browser displays compressed image
                             const yoloWidth = data.result.original_image_width || img.naturalWidth;
                             const yoloHeight = data.result.original_image_height || img.naturalHeight;
+                            // Store gap info for visualization
+                            currentGapInfo = data.result.gap_info || null;
                             img.onload = () => {
-                                drawBoundingBoxes(data.result.detections, yoloWidth, yoloHeight);
+                                drawBoundingBoxes(data.result.detections, yoloWidth, yoloHeight, currentGapInfo);
                             };
                             // Also draw immediately if image is already loaded
                             if (img.complete && img.naturalWidth) {
-                                drawBoundingBoxes(data.result.detections, yoloWidth, yoloHeight);
+                                drawBoundingBoxes(data.result.detections, yoloWidth, yoloHeight, currentGapInfo);
                             }
                         } else {
+                            currentGapInfo = null;
                             const canvas = document.getElementById('bboxCanvas');
                             const ctx = canvas.getContext('2d');
                             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -831,6 +951,9 @@
                     
                     // Draw bounding boxes on the current feed
                     const img = document.getElementById('robotFeed');
+                    // Store gap info for visualization
+                    currentGapInfo = result.gap_info || null;
+                    
                     if (hasUploadedFile) {
                         // Update the image display for uploaded file
                         const reader = new FileReader();
@@ -844,7 +967,7 @@
                                     // Use YOLO's original dimensions (uploaded file isn't compressed server-side for display)
                                     const yoloWidth = result.original_image_width || img.naturalWidth;
                                     const yoloHeight = result.original_image_height || img.naturalHeight;
-                                    drawBoundingBoxes(result.detections, yoloWidth, yoloHeight);
+                                    drawBoundingBoxes(result.detections, yoloWidth, yoloHeight, currentGapInfo);
                                 }
                             };
                         };
@@ -855,7 +978,7 @@
                         if (result.detections && img.naturalWidth) {
                             const yoloWidth = result.original_image_width || img.naturalWidth;
                             const yoloHeight = result.original_image_height || img.naturalHeight;
-                            drawBoundingBoxes(result.detections, yoloWidth, yoloHeight);
+                            drawBoundingBoxes(result.detections, yoloWidth, yoloHeight, currentGapInfo);
                         }
                     }
                 } else {
@@ -872,19 +995,21 @@
         let lastDetections = null;
         let lastYoloWidth = null;
         let lastYoloHeight = null;
+        let lastGapInfo = null;
         window.addEventListener('resize', () => {
             if (lastDetections && lastYoloWidth && lastYoloHeight) {
-                drawBoundingBoxes(lastDetections, lastYoloWidth, lastYoloHeight);
+                drawBoundingBoxes(lastDetections, lastYoloWidth, lastYoloHeight, lastGapInfo);
             }
         });
         
         // Store detections and YOLO dimensions for resize redraw
         const originalDrawBoundingBoxes = drawBoundingBoxes;
-        drawBoundingBoxes = function(detections, imgWidth, imgHeight) {
+        drawBoundingBoxes = function(detections, imgWidth, imgHeight, gapInfo = null) {
             lastDetections = detections;
             lastYoloWidth = imgWidth;
             lastYoloHeight = imgHeight;
-            originalDrawBoundingBoxes(detections, imgWidth, imgHeight);
+            lastGapInfo = gapInfo;
+            originalDrawBoundingBoxes(detections, imgWidth, imgHeight, gapInfo);
         };
         
         // Start polling when page loads
