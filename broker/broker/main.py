@@ -41,7 +41,6 @@ def start(
     # Import picamera2 here so the module can be imported on non-Pi systems
     try:
         from picamera2 import Picamera2
-        from libcamera import Transform
     except ImportError:
         print("[red]Error: picamera2 not installed[/red]")
         print("Install with: sudo apt install -y libcamera-apps python3-libcamera && uv pip install picamera2")
@@ -51,14 +50,13 @@ def start(
     print(f"[blue]→[/blue] Serial port: {serial_port} @ {baud_rate} baud")
     print(f"[blue]→[/blue] Capture interval: {'max speed' if interval == 0 else f'{interval}ms'}")
     print("[blue]→[/blue] Opening serial port...")
-    ser = serial.Serial(serial_port, baud_rate, timeout=1)
+    ser = serial.Serial(serial_port, baud_rate, timeout=1, write_timeout=0.2)
     print("[green]✓[/green] Serial port opened")
     print("[blue]→[/blue] Initializing camera...")
     camera = Picamera2()
     config = camera.create_video_configuration(
-        main={"size": (1280, 720), "format": "RGB888"},
+        main={"size": (720, 1280), "format": "RGB888"},
         buffer_count=4,  # More buffers for continuous high-speed capture
-        transform=Transform(rotation=0),
     )
     camera.configure(config)
     camera.start()
