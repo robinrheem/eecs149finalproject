@@ -18,7 +18,7 @@ preamble {=
   #include <stdio.h>
   #include <string.h>
   #include <stdlib.h>
-  #include "pico/stdlib.h"
+  #include "pico/stdlib.h" 
 =}
 
 main reactor {
@@ -259,7 +259,7 @@ main reactor {
     }
 
     mode GOAL {
-        reaction(t, e.left, e.right) -> m.left, m.right, m.left_speed, m.right_speed, d.line0 {=
+        reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left, m.right, m.left_speed, m.right_speed, d.line0 {=
             lf_set(m.left, e.left->value);
             lf_set(m.right, e.right->value);
 
@@ -285,6 +285,8 @@ main reactor {
                 lf_set(m.left_speed, 0.0f);
                 lf_set(m.right_speed, 0.0f);
                 lf_set(d.line0, "Goal hit");
+                sleep_ms(5000);
+                lf_set_mode(COMMAND_PARSING);
             }
         =}
     }
