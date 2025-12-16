@@ -88,7 +88,7 @@ main reactor {
     //  MODE 1: COMMAND_PARSING
     // ============================================================
     initial mode COMMAND_PARSING {
-        reaction(t) -> reset(DRIVING), reset(TURNING), d.line0, d.line2 {=
+        reaction(t) -> reset(DRIVING), reset(TURNING), reset(GOAL), reset(STOP), d.line0, d.line2 {=
 
             if (self->buf == NULL) return;
 
@@ -107,40 +107,58 @@ main reactor {
                         lf_set(d.line0, "Command: DRIVE");
 
                         // set speeds and target distance
-                        self->l_speed = 0.1f;
-                        self->r_speed = 0.1f;
+                        self->l_speed = 0.4f;
+                        self->r_speed = 0.4f;
 
                         // drive for an arbitrary distance (encoder ticks)
-                        self->target_ticks = 500.0f;   
+                        self->target_ticks = 1000.0f;   
                         self->driving_initialized = 0;
 
                         lf_set_mode(DRIVING);
                         return; 
 
-                    } else if (strcmp(self->buf, "turn left") == 0) {
+                    } else if (strcmp(self->buf, "turn_left") == 0) {
                         lf_set(d.line0, "Command: TURN L");
 
-                        self->l_speed = -0.1f;  // counter-clockwise
-                        self->r_speed =  0.1f;
+                        self->l_speed = -0.4f;  // counter-clockwise
+                        self->r_speed =  0.4f;
 
                         self->start_angle = self->current_yaw;
-                        self->target_angle_delta = 90.0f;   // 90-degree left turn
+                        self->target_angle_delta = 30.0f;   // 30-degree left turn
 
                         lf_set_mode(TURNING);
                         return;
 
-                    } else if (strcmp(self->buf, "turn right") == 0) {
+                    } else if (strcmp(self->buf, "turn_right") == 0) {
                         lf_set(d.line0, "Command: TURN R");
 
-                        self->l_speed =  0.1f;  // clockwise
-                        self->r_speed = -0.1f;
+                        self->l_speed =  0.4f;  // clockwise
+                        self->r_speed = -0.4f;
 
                         self->start_angle = self->current_yaw;
-                        self->target_angle_delta = -90.0f;  // 90-degree right turn
+                        self->target_angle_delta = -30.0f;  // 30-degree right turn
 
                         lf_set_mode(TURNING);
                         return;
 
+                    } else if (strcmp(self->buf, "goal") == 0) {
+                        lf_set(d.line0, "Command: GOAL");
+
+                        self->l_speed =  0.4; 
+                        self->r_speed = 0.4f;
+
+                        lf_set_mode(GOAL);
+                        return;
+
+                    } else if (strcmp(self->buf, "stop") == 0) {
+                        lf_set(d.line0, "Command: STOP");
+
+                        self->l_speed =  0.0f;  
+                        self->r_speed = 0.0f;
+
+                        lf_set_mode(STOP);
+                        return;
+                        
                     } else if (self->buf[0] != '\0') {
                         lf_set(d.line0, "Unknown Command");
                     }
@@ -217,6 +235,56 @@ main reactor {
                 lf_set(m.right_speed, 0.0f);
                 lf_set(d.line0, "Turn done");
                 lf_set_mode(COMMAND_PARSING);
+            }
+        =}
+    }
+
+    mode STOP {
+        reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left, m.right, m.left_speed, m.right_speed, d.line0 {=
+            lf_set(m.left, e.left->value);
+            lf_set(m.right, e.right->value);
+
+            // Apply commanded turning speeds
+            lf_set(m.left_speed, self->l_speed);
+            lf_set(m.right_speed, self->r_speed);
+
+            // Compute yaw difference since we started turning
+            float delta = self->current_yaw - self->start_angle;
+
+            lf_set(m.left_speed, 0.0f);
+            lf_set(m.right_speed, 0.0f);
+            lf_set(d.line0, "Stopped");
+            lf_set_mode(COMMAND_PARSING);
+        =}
+    }
+
+    mode GOAL {
+        reaction(t, e.left, e.right) -> m.left, m.right, m.left_speed, m.right_speed, d.line0 {=
+            lf_set(m.left, e.left->value);
+            lf_set(m.right, e.right->value);
+
+            // Initialize distance reference on first entry
+            if (!self->driving_initialized) {
+                float avg_ticks = ((float) fabs(e.left->value) +
+                                   (float) fabs(e.right->value)) / 2.0f;
+                self->start_ticks = avg_ticks;
+                self->driving_initialized = 1;
+            }
+
+            // Apply commanded speeds
+            lf_set(m.left_speed, self->l_speed);
+            lf_set(m.right_speed, self->r_speed);
+
+            // Compute distance traveled since start (in encoder tick units)
+            float avg_ticks = ((float) fabs(e.left->value) +
+                               (float) fabs(e.right->value)) / 2.0f;
+            float traveled = avg_ticks - self->start_ticks;
+
+            if (traveled >= 1500.0) {
+                // Stop and go back to command mode
+                lf_set(m.left_speed, 0.0f);
+                lf_set(m.right_speed, 0.0f);
+                lf_set(d.line0, "Goal hit");
             }
         =}
     }
