@@ -6,6 +6,7 @@ import typer
 from rich import print
 import httpx
 import serial
+from PIL import Image
 
 app = typer.Typer()
 
@@ -30,8 +31,8 @@ def start(
     ] = False,
     interval: Annotated[
         int,
-        typer.Option(help="Capture interval in milliseconds", envvar="CAPTURE_INTERVAL"),
-    ] = 5000,
+        typer.Option(help="Capture interval in milliseconds (0 for max speed)", envvar="CAPTURE_INTERVAL"),
+    ] = 0,
 ):
     """
     Start the Broker.
@@ -41,6 +42,7 @@ def start(
     # Import picamera2 here so the module can be imported on non-Pi systems
     try:
         from picamera2 import Picamera2
+        from libcamera import Transform
     except ImportError:
         print("[red]Error: picamera2 not installed[/red]")
         print("Install with: sudo apt install -y libcamera-apps python3-libcamera && uv pip install picamera2")
@@ -48,15 +50,16 @@ def start(
     print(f"[blue]→[/blue] Relay server: {relay_server_address}")
     print(f"[blue]→[/blue] Mock mode: {mock}")
     print(f"[blue]→[/blue] Serial port: {serial_port} @ {baud_rate} baud")
-    print(f"[blue]→[/blue] Capture interval: {interval}ms")
+    print(f"[blue]→[/blue] Capture interval: {'max speed' if interval == 0 else f'{interval}ms'}")
     print("[blue]→[/blue] Opening serial port...")
     ser = serial.Serial(serial_port, baud_rate, timeout=1)
     print("[green]✓[/green] Serial port opened")
     print("[blue]→[/blue] Initializing camera...")
     camera = Picamera2()
     config = camera.create_video_configuration(
-        main={"size": (640, 480), "format": "RGB888"},
-        buffer_count=2,
+        main={"size": (1280, 720), "format": "RGB888"},
+        buffer_count=4,  # More buffers for continuous high-speed capture
+        transform=Transform(rotation=0),
     )
     camera.configure(config)
     camera.start()
@@ -69,12 +72,18 @@ def start(
                 try:
                     if mock:
                         mock_data = ["drive", "turn_left", "turn_right", "stop"]
-                        ser.write(f"{mock_data[random.randint(0, len(mock_data) - 1)]}\n".encode())
-                        print(f"[green]✓[/green] Mock data sent: {mock_data[random.randint(0, len(mock_data) - 1)]}")
-                        time.sleep(interval_seconds)
+                        choice = random.choice(mock_data)
+                        ser.write(f"{choice}\n".encode())
+                        print(f"[green]✓[/green] Mock data sent: {choice}")
+                        if interval_seconds > 0:
+                            time.sleep(interval_seconds)
                         continue
+                    # Capture directly to numpy array (faster than capture_file)
+                    frame = camera.capture_array()
+                    # Encode to JPEG in memory
+                    img = Image.fromarray(frame)
                     buffer = BytesIO()
-                    camera.capture_file(buffer, format="jpeg")
+                    img.save(buffer, format="JPEG", quality=85)
                     buffer.seek(0)
                     response = client.post(
                         f"{relay_server_address}/api/v1/actions",
@@ -85,7 +94,8 @@ def start(
                     print(f"[green]✓[/green] Action: {response['action']}")
                 except Exception as e:
                     print(f"[red]✗[/red] Error: {e}")
-                time.sleep(interval_seconds)
+                if interval_seconds > 0:
+                    time.sleep(interval_seconds)
     except KeyboardInterrupt:
         print("\n[yellow]Shutting down...[/yellow]")
     finally:
