@@ -605,9 +605,17 @@
                         }
                         
                         if (data.result.mode === 'detect' && data.result.detections) {
+                            // Use original image dimensions from YOLO (not compressed image dimensions)
+                            // YOLO coordinates are from original, but browser displays compressed image
+                            const yoloWidth = data.result.original_image_width || img.naturalWidth;
+                            const yoloHeight = data.result.original_image_height || img.naturalHeight;
                             img.onload = () => {
-                                drawBoundingBoxes(data.result.detections, img.naturalWidth, img.naturalHeight);
+                                drawBoundingBoxes(data.result.detections, yoloWidth, yoloHeight);
                             };
+                            // Also draw immediately if image is already loaded
+                            if (img.complete && img.naturalWidth) {
+                                drawBoundingBoxes(data.result.detections, yoloWidth, yoloHeight);
+                            }
                         } else {
                             const canvas = document.getElementById('bboxCanvas');
                             const ctx = canvas.getContext('2d');
@@ -725,10 +733,13 @@
                 
                 if (hasUploadedFile) {
                     formData.append('file', fileInput.files[0]);
+                    // Fresh upload may need rotation correction
+                    formData.append('skip_rotation', 'false');
                 } else {
-                    // Use the latest robot camera feed
+                    // Use the latest robot camera feed (already rotation-corrected)
                     const blob = base64ToBlob(latestFrameBase64);
                     formData.append('file', blob, 'robot_frame.jpg');
+                    formData.append('skip_rotation', 'true');
                 }
                 formData.append('mode', 'identify');
                 
@@ -787,10 +798,13 @@
                 
                 if (hasUploadedFile) {
                     formData.append('file', fileInput.files[0]);
+                    // Fresh upload may need rotation correction
+                    formData.append('skip_rotation', 'false');
                 } else {
-                    // Use the latest robot camera feed
+                    // Use the latest robot camera feed (already rotation-corrected)
                     const blob = base64ToBlob(latestFrameBase64);
                     formData.append('file', blob, 'robot_frame.jpg');
+                    formData.append('skip_rotation', 'true');
                 }
                 formData.append('mode', 'detect');
                 
@@ -827,15 +841,21 @@
                             
                             img.onload = () => {
                                 if (result.detections) {
-                                    drawBoundingBoxes(result.detections, img.naturalWidth, img.naturalHeight);
+                                    // Use YOLO's original dimensions (uploaded file isn't compressed server-side for display)
+                                    const yoloWidth = result.original_image_width || img.naturalWidth;
+                                    const yoloHeight = result.original_image_height || img.naturalHeight;
+                                    drawBoundingBoxes(result.detections, yoloWidth, yoloHeight);
                                 }
                             };
                         };
                         reader.readAsDataURL(fileInput.files[0]);
                     } else {
                         // Draw boxes on existing robot feed
+                        // Use original YOLO dimensions for correct scaling
                         if (result.detections && img.naturalWidth) {
-                            drawBoundingBoxes(result.detections, img.naturalWidth, img.naturalHeight);
+                            const yoloWidth = result.original_image_width || img.naturalWidth;
+                            const yoloHeight = result.original_image_height || img.naturalHeight;
+                            drawBoundingBoxes(result.detections, yoloWidth, yoloHeight);
                         }
                     }
                 } else {
@@ -850,19 +870,20 @@
         
         // Redraw bounding boxes on window resize
         let lastDetections = null;
+        let lastYoloWidth = null;
+        let lastYoloHeight = null;
         window.addEventListener('resize', () => {
-            if (lastDetections) {
-                const img = document.getElementById('robotFeed');
-                if (img.naturalWidth) {
-                    drawBoundingBoxes(lastDetections, img.naturalWidth, img.naturalHeight);
-                }
+            if (lastDetections && lastYoloWidth && lastYoloHeight) {
+                drawBoundingBoxes(lastDetections, lastYoloWidth, lastYoloHeight);
             }
         });
         
-        // Store detections for resize redraw
+        // Store detections and YOLO dimensions for resize redraw
         const originalDrawBoundingBoxes = drawBoundingBoxes;
         drawBoundingBoxes = function(detections, imgWidth, imgHeight) {
             lastDetections = detections;
+            lastYoloWidth = imgWidth;
+            lastYoloHeight = imgHeight;
             originalDrawBoundingBoxes(detections, imgWidth, imgHeight);
         };
         
