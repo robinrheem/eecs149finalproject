@@ -74,7 +74,7 @@ def start(
                         time.sleep(interval_seconds)
                         continue
                     buffer = BytesIO()
-                    camera.capture_file(buffer, format="jpeg", quality=50)
+                    camera.capture_file(buffer, format="jpeg")
                     buffer.seek(0)
                     response = client.post(
                         f"{relay_server_address}/api/v1/actions",
