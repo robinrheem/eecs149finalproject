@@ -266,6 +266,14 @@ def check_initial_objects_present(current_detections: list[dict], initial_classe
     return False
 
 
+def is_object_visible(detections: list[dict], class_name: str) -> bool:
+    """Check if an object with the given class name is in detections"""
+    if not class_name:
+        return False
+    class_lower = class_name.lower()
+    return any(d["class"].lower() == class_lower for d in detections)
+
+
 def identify_targets(image_bytes: bytes, system_prompt: str, prompt: str) -> dict:
     """Use VLM to identify objects and generate YOLO targets"""
     global identified_targets
@@ -340,6 +348,7 @@ async def analyze_image(
     system_prompt: str = Form(IDENTIFY_SYSTEM_PROMPT),
     prompt: str = Form(IDENTIFY_PROMPT),
     target: str = Form(""),
+    skip_rotation: str = Form("false"),
 ):
     """
     Robot sends image here. Analyzes with YOLO or VLM, stores frame for browser.
@@ -357,22 +366,26 @@ async def analyze_image(
     - system_prompt: Custom system prompt for VLM (mode=identify)
     - prompt: Custom prompt for VLM (mode=identify)
     - target: Object to look for (mode=detect). If not provided, uses targets from last "identify" call
+    - skip_rotation: "true" to skip rotation correction (for images already corrected, e.g. from browser)
     """
     action = "stop"
     error_message = "Unknown error"
+    should_skip_rotation = skip_rotation.lower() == "true"
     try:
         raw_image_bytes = await file.read()
-        print(f"[actions] Received frame: {len(raw_image_bytes)} bytes, mode={mode}")
-        
+        print(f"[actions] Received frame: {len(raw_image_bytes)} bytes, mode={mode}, skip_rotation={should_skip_rotation}")
         # Fix camera orientation first (before any processing)
-        image_bytes = correct_image_orientation(raw_image_bytes)
-        if CAMERA_ROTATION != 0:
-            print(f"[actions] Applied {CAMERA_ROTATION}° rotation")
-        
+        # Skip if image is already corrected (e.g., sent from browser using robot feed)
+        if should_skip_rotation:
+            image_bytes = raw_image_bytes
+            print(f"[actions] Skipped rotation (image already corrected)")
+        else:
+            image_bytes = correct_image_orientation(raw_image_bytes)
+            if CAMERA_ROTATION != 0:
+                print(f"[actions] Applied {CAMERA_ROTATION}° rotation")
         # Compress image for web display (keep corrected original for processing)
         compressed_bytes = compress_image_for_web(image_bytes)
         print(f"[actions] Compressed for web: {len(compressed_bytes)} bytes ({100*len(compressed_bytes)//len(raw_image_bytes)}%)")
-        
         robot_state["latest_frame"] = image_bytes  # Keep original for processing
         robot_state["latest_frame_base64"] = base64.b64encode(compressed_bytes).decode('utf-8')  # Compressed for web
         robot_state["frame_timestamp"] = time.time()
@@ -380,6 +393,11 @@ async def analyze_image(
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         image_width = img.shape[1] if img is not None else 640
+        image_height = img.shape[0] if img is not None else 480
+        # Store original image dimensions so browser can scale bounding boxes correctly
+        # (browser displays compressed image but YOLO coords are from original)
+        robot_state["original_image_width"] = image_width
+        robot_state["original_image_height"] = image_height
         if mode == "identify":
             # Identify mode: detect objects with VLM and reset navigation state
             result = identify_targets(image_bytes, system_prompt, prompt)
@@ -422,10 +440,26 @@ async def analyze_image(
                         }
                         result["navigation_status"] = "navigating"
                     else:
-                        # Not enough objects to find a gap
-                        action = "stop"
-                        result["navigation_status"] = "no_gap_found"
-                        result["reason"] = "Need at least 2 objects to find a gap"
+                        # Can't find a gap - check which object we lost and turn toward it
+                        left_class = robot_state["gap_left_class"]
+                        right_class = robot_state["gap_right_class"]
+                        left_visible = is_object_visible(detections, left_class)
+                        right_visible = is_object_visible(detections, right_class)
+                        if left_visible and not right_visible:
+                            # Lost the right object - turn right to find it
+                            action = "turn_right"
+                            result["navigation_status"] = "recovering"
+                            result["reason"] = f"Lost {right_class}, turning right to find it"
+                        elif right_visible and not left_visible:
+                            # Lost the left object - turn left to find it
+                            action = "turn_left"
+                            result["navigation_status"] = "recovering"
+                            result["reason"] = f"Lost {left_class}, turning left to find it"
+                        else:
+                            # Both objects lost or other issue - stop
+                            action = "stop"
+                            result["navigation_status"] = "no_gap_found"
+                            result["reason"] = "Need at least 2 objects to find a gap"
             else:
                 # Not navigating yet - start navigation if we detect objects
                 if len(detections) >= 2:
@@ -460,6 +494,10 @@ async def analyze_image(
             "gap_left_class": robot_state["gap_left_class"],
             "gap_right_class": robot_state["gap_right_class"],
         }
+        # Include original image dimensions for proper bounding box scaling in browser
+        # (YOLO runs on original image, browser displays compressed version)
+        result["original_image_width"] = image_width
+        result["original_image_height"] = image_height
         robot_state["latest_result"] = result
         robot_state["result_timestamp"] = time.time()
         return JSONResponse(result)
