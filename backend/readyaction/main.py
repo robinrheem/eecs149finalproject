@@ -266,6 +266,14 @@ def check_initial_objects_present(current_detections: list[dict], initial_classe
     return False
 
 
+def is_object_visible(detections: list[dict], class_name: str) -> bool:
+    """Check if an object with the given class name is in detections"""
+    if not class_name:
+        return False
+    class_lower = class_name.lower()
+    return any(d["class"].lower() == class_lower for d in detections)
+
+
 def identify_targets(image_bytes: bytes, system_prompt: str, prompt: str) -> dict:
     """Use VLM to identify objects and generate YOLO targets"""
     global identified_targets
@@ -432,10 +440,26 @@ async def analyze_image(
                         }
                         result["navigation_status"] = "navigating"
                     else:
-                        # Not enough objects to find a gap
-                        action = "stop"
-                        result["navigation_status"] = "no_gap_found"
-                        result["reason"] = "Need at least 2 objects to find a gap"
+                        # Can't find a gap - check which object we lost and turn toward it
+                        left_class = robot_state["gap_left_class"]
+                        right_class = robot_state["gap_right_class"]
+                        left_visible = is_object_visible(detections, left_class)
+                        right_visible = is_object_visible(detections, right_class)
+                        if left_visible and not right_visible:
+                            # Lost the right object - turn right to find it
+                            action = "turn_right"
+                            result["navigation_status"] = "recovering"
+                            result["reason"] = f"Lost {right_class}, turning right to find it"
+                        elif right_visible and not left_visible:
+                            # Lost the left object - turn left to find it
+                            action = "turn_left"
+                            result["navigation_status"] = "recovering"
+                            result["reason"] = f"Lost {left_class}, turning left to find it"
+                        else:
+                            # Both objects lost or other issue - stop
+                            action = "stop"
+                            result["navigation_status"] = "no_gap_found"
+                            result["reason"] = "Need at least 2 objects to find a gap"
             else:
                 # Not navigating yet - start navigation if we detect objects
                 if len(detections) >= 2:
