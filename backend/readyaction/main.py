@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from openai import OpenAI
+from openai import AsyncOpenAI
 from pathlib import Path
 from typing import Literal
 import json
@@ -28,7 +28,7 @@ app.add_middleware(
 )
 templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
-client = OpenAI(
+client = AsyncOpenAI(
     base_url="http://localhost:4455/v1",
     api_key=""
 )
@@ -279,11 +279,11 @@ def is_object_visible(detections: list[dict], class_name: str) -> bool:
     return any(d["class"].lower() == class_lower for d in detections)
 
 
-def identify_targets(image_bytes: bytes, system_prompt: str, prompt: str) -> dict:
+async def identify_targets(image_bytes: bytes, system_prompt: str, prompt: str) -> dict:
     """Use VLM to identify objects and generate YOLO targets"""
     global identified_targets
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model="SmolVLM-500M-Instruct",
         messages=[
             {
@@ -404,15 +404,16 @@ async def analyze_image(
         robot_state["original_image_width"] = image_width
         robot_state["original_image_height"] = image_height
         if mode == "identify":
-            # Identify mode: detect objects with VLM and reset navigation state
-            result = identify_targets(image_bytes, system_prompt, prompt)
-            # Reset navigation state when identifying new targets
+            # Reset navigation state FIRST when identifying new targets
             robot_state["initial_objects"] = []
             robot_state["is_navigating"] = False
             robot_state["gap_left_class"] = None
             robot_state["gap_right_class"] = None
             robot_state["objects_missing_count"] = 0
             robot_state["goal_reached"] = False
+            identified_targets.clear()
+            print("[identify] Cleared navigation state and targets")
+            result = await identify_targets(image_bytes, system_prompt, prompt)
             action = "stop"  # Always stop in identify mode
         elif mode == "detect":
             if target:
@@ -431,7 +432,6 @@ async def analyze_image(
                     # Objects not detected this frame - increment counter
                     robot_state["objects_missing_count"] += 1
                     print(f"[navigation] Objects missing for {robot_state['objects_missing_count']} consecutive frame(s)")
-                    
                     if robot_state["objects_missing_count"] >= GOAL_FRAME_THRESHOLD:
                         # Initial objects confirmed gone for multiple frames - goal reached!
                         action = "goal"
