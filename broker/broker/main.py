@@ -1,4 +1,5 @@
 from io import BytesIO
+import glob
 import random
 import time
 from typing import Annotated
@@ -8,6 +9,17 @@ import httpx
 import serial
 
 app = typer.Typer()
+
+
+def find_serial_port(preferred: str) -> str:
+    """Find an available serial port, preferring the specified one."""
+    if preferred and glob.glob(preferred):
+        return preferred
+    # Try all ttyACM ports
+    ports = sorted(glob.glob("/dev/ttyACM*"))
+    if ports:
+        return ports[0]
+    raise serial.SerialException("No serial port found")
 
 
 @app.command()
@@ -50,8 +62,9 @@ def start(
     print(f"[blue]→[/blue] Serial port: {serial_port} @ {baud_rate} baud")
     print(f"[blue]→[/blue] Capture interval: {'max speed' if interval == 0 else f'{interval}ms'}")
     print("[blue]→[/blue] Opening serial port...")
-    ser = serial.Serial(serial_port, baud_rate, timeout=1, write_timeout=1)
-    print("[green]✓[/green] Serial port opened")
+    port = find_serial_port(serial_port)
+    ser = serial.Serial(port, baud_rate, timeout=1, write_timeout=1)
+    print(f"[green]✓[/green] Serial port opened: {port}")
     print("[blue]→[/blue] Initializing camera...")
     camera = Picamera2()
     config = camera.create_video_configuration(
@@ -70,8 +83,20 @@ def start(
                     if mock:
                         mock_data = ["drive", "turn_left", "turn_right", "stop"]
                         choice = random.choice(mock_data)
-                        ser.write(f"{choice}\n".encode())
-                        ser.flush()
+                        try:
+                            ser.write(f"{choice}\n".encode())
+                            ser.flush()
+                        except (serial.SerialException, OSError) as e:
+                            print(f"[red]✗[/red] Serial error: {e}, reopening...")
+                            try:
+                                ser.close()
+                            except Exception:
+                                pass
+                            time.sleep(0.5)
+                            port = find_serial_port(serial_port)
+                            ser = serial.Serial(port, baud_rate, timeout=1, write_timeout=1)
+                            print(f"[green]✓[/green] Serial reopened: {port}")
+                            continue
                         print(f"[green]✓[/green] Mock data sent: {choice}")
                         if interval_seconds > 0:
                             time.sleep(interval_seconds)
@@ -88,6 +113,16 @@ def start(
                     ser.write(action.encode())
                     ser.flush()
                     print(f"[green]✓[/green] Action: {response['action']}")
+                except (serial.SerialException, OSError) as e:
+                    print(f"[red]✗[/red] Serial error: {e}, reopening...")
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+                    port = find_serial_port(serial_port)
+                    ser = serial.Serial(port, baud_rate, timeout=1, write_timeout=1)
+                    print(f"[green]✓[/green] Serial reopened: {port}")
                 except Exception as e:
                     print(f"[red]✗[/red] Error: {e}")
                 if interval_seconds > 0:
