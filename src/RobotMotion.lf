@@ -188,7 +188,7 @@ main reactor {
                 } else {
                     drain_rx();
                     self->idx = 0;
-                    self->buf[0] = '\0;
+                    self->buf[0] = '\0';
                 }
             }
         =}
