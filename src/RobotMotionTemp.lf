@@ -8,98 +8,263 @@ target C {
   
   import Display from "lib/Display.lf"
   import Encoders from "lib/Encoders.lf"
-  import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+  import Motors from "lib/Motors.lf"
   import Accelerometer from "lib/IMU.lf"
   import GyroAngle from "lib/IMU.lf"
-  import Tilt from "Tilt.lf"
   
   preamble {=
     #include <math.h>
+    #include <stdio.h>
+    #include <string.h>
+    #include <stdlib.h>
+    #include "pico/stdlib.h"
   =}
   
   main reactor {
       e = new Encoders()
-      m = new MotorsWithFeedback()
+      m = new Motors()
       a = new Accelerometer()
       g = new GyroAngle()
-      tilt = new Tilt()
       d = new Display()
   
       timer t(0, 10ms)
   
-      state turning_top_rotation: float = 0
+      // ------------------------------------------------------------
+      // Command parsing
+      // ------------------------------------------------------------
+      state buf: char*
+      state buf_size: int = 17
+      state idx: int = 0
   
+      // Motor power commands [-1.0, 1.0]
+      state left_power: float = 0.0
+      state right_power: float = 0.0
+  
+      // ------------------------------------------------------------
+      // Driving (encoder-based distance)
+      // ------------------------------------------------------------
+      state start_ticks: float = 0.0
+      state target_ticks: float = 0.0
+      state driving_initialized: int = 0
+  
+      // ------------------------------------------------------------
+      // Turning (gyro yaw)
+      // ------------------------------------------------------------
+      state current_yaw: float = 0.0
+      state start_angle: float = 0.0
+      state target_angle_delta: float = 0.0   // +left, −right
+  
+      // ------------------------------------------------------------
+      // Periodic sensor updates
+      // ------------------------------------------------------------
       reaction(t) -> e.trigger, a.trigger, g.trigger {=
           lf_set(e.trigger, true);
           lf_set(a.trigger, true);
           lf_set(g.trigger, true);
       =}
   
-      reaction(startup) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed {=
-          lf_set(m.left, e.left->value);
-          lf_set(m.right, e.right->value);
-          lf_set(m.left_speed, 0.2f);
-          lf_set(m.right_speed, -0.2f);
+      // ------------------------------------------------------------
+      // Startup
+      // ------------------------------------------------------------
+      reaction(startup) -> m.left_power, m.right_power, d.line0 {=
+          stdio_init_all();
+  
+          self->buf = (char*) malloc(self->buf_size);
+          if (self->buf != NULL) {
+              self->buf[0] = '\0';
+          }
+  
+          lf_set(m.left_power, 0.0f);
+          lf_set(m.right_power, 0.0f);
+          lf_set(d.line0, "Mode: CMD");
       =}
   
-      reaction(a.x, a.y, a.z) -> tilt.x, tilt.y, tilt.z {=
-          lf_set(tilt.x, a.x->value);
-          lf_set(tilt.y, a.y->value);
-          lf_set(tilt.z, a.z->value);
+      // ------------------------------------------------------------
+      // Keep track of yaw
+      // ------------------------------------------------------------
+      reaction(g.z) {=
+          self->current_yaw = g.z->value;
       =}
   
-      initial mode FINDINGUP {
-          reaction(tilt.pitch, tilt.roll) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed, reset(DRIVINGUP) {=
-              lf_set(m.left, e.left->value);
-              lf_set(m.right, e.right->value);
-              
-              if (abs(tilt.roll->value) <= 2 && tilt.pitch->value >= 10) {
-                  lf_set(m.left_speed, 0.2f);
-                  lf_set(m.right_speed, 0.2f);
-                  lf_set_mode(DRIVINGUP);
+      reaction(g.z) -> d.line1 {=
+          static char buf[17];
+          snprintf(buf, 17, "yaw: %.1f", g.z->value);
+          lf_set(d.line1, buf);
+      =}
+  
+      // ============================================================
+      // MODE 1: COMMAND_PARSING
+      // ============================================================
+      initial mode COMMAND_PARSING {
+          reaction(t) -> reset(DRIVING), reset(TURNING), reset(GOAL), reset(STOP), d.line0, d.line2 {=
+  
+              if (self->buf == NULL) return;
+  
+              int c;
+              while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+                  if (c == '\n' || c == '\r') {
+                      self->buf[self->idx] = '\0';
+  
+                      if (self->idx > 0) {
+                          lf_set(d.line2, self->buf);
+                      }
+                      self->idx = 0;
+  
+                      if (strcmp(self->buf, "drive") == 0) {
+                          lf_set(d.line0, "Command: DRIVE");
+  
+                          self->left_power  = 0.1f;
+                          self->right_power = 0.1f;
+  
+                          self->target_ticks = 1000.0f;
+                          self->driving_initialized = 0;
+  
+                          lf_set_mode(DRIVING);
+                          return;
+  
+                      } else if (strcmp(self->buf, "turn_left") == 0) {
+                          lf_set(d.line0, "Command: TURN L");
+  
+                          self->left_power  = -0.1f;
+                          self->right_power =  0.1f;
+  
+                          self->start_angle = self->current_yaw;
+                          self->target_angle_delta = 30.0f;
+  
+                          lf_set_mode(TURNING);
+                          return;
+  
+                      } else if (strcmp(self->buf, "turn_right") == 0) {
+                          lf_set(d.line0, "Command: TURN R");
+  
+                          self->left_power  =  0.1f;
+                          self->right_power = -0.1f;
+  
+                          self->start_angle = self->current_yaw;
+                          self->target_angle_delta = -30.0f;
+  
+                          lf_set_mode(TURNING);
+                          return;
+  
+                      } else if (strcmp(self->buf, "goal") == 0) {
+                          lf_set(d.line0, "Command: GOAL");
+  
+                          self->left_power  = 0.1f;
+                          self->right_power = 0.1f;
+                          self->driving_initialized = 0;
+  
+                          lf_set_mode(GOAL);
+                          return;
+  
+                      } else if (strcmp(self->buf, "stop") == 0) {
+                          lf_set(d.line0, "Command: STOP");
+  
+                          self->left_power  = 0.0f;
+                          self->right_power = 0.0f;
+  
+                          lf_set_mode(STOP);
+                          return;
+  
+                      } else if (self->buf[0] != '\0') {
+                          lf_set(d.line0, "Unknown Command");
+                      }
+  
+                      self->buf[0] = '\0';
+  
+                  } else if (self->idx < self->buf_size - 1) {
+                      self->buf[self->idx++] = (char)c;
+                  }
               }
           =}
       }
   
-      mode DRIVINGUP {
-          reaction(tilt.roll) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed {=
-              lf_set(m.left, e.left->value);
-              lf_set(m.right, e.right->value);
+      // ============================================================
+      // MODE 2: DRIVING
+      // ============================================================
+      mode DRIVING {
+          reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
   
-              lf_set(m.left_speed, tilt.roll->value * 0.004f + 0.2f);
-              lf_set(m.right_speed, tilt.roll->value * -0.004f + 0.2f);
-          =}
+              if (!self->driving_initialized) {
+                  float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
+                  self->start_ticks = avg;
+                  self->driving_initialized = 1;
+              }
   
-          reaction(tilt.pitch, tilt.roll) g.z -> m.left_speed, m.right_speed, reset(TURNINGTOP) {=
-              if (tilt.pitch->value <= 2 && abs(tilt.roll->value) <= 2) {
-                  lf_set(m.left_speed, 0.2f);
-                  lf_set(m.right_speed, -0.2f);
-                  self->turning_top_rotation = g.z->value;
-                  lf_set_mode(TURNINGTOP);
+              lf_set(m.left_power, self->left_power);
+              lf_set(m.right_power, self->right_power);
+  
+              float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
+              float traveled = avg - self->start_ticks;
+  
+              if (traveled >= self->target_ticks) {
+                  lf_set(m.left_power, 0.0f);
+                  lf_set(m.right_power, 0.0f);
+                  lf_set(d.line0, "Drive done");
+                  lf_set_mode(COMMAND_PARSING);
               }
           =}
       }
   
-      mode TURNINGTOP {
-          reaction(g.z) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed, reset(DRIVINGDOWN) {=
-              lf_set(m.left, e.left->value);
-              lf_set(m.right, e.right->value);
+      // ============================================================
+      // MODE 3: TURNING
+      // ============================================================
+      mode TURNING {
+          reaction(t) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
   
-              if (abs(g.z->value - self->turning_top_rotation) >= 180) {
-                  lf_set(m.left_speed, 0.2f);
-                  lf_set(m.right_speed, 0.2f);
-                  lf_set_mode(DRIVINGDOWN);
+              lf_set(m.left_power, self->left_power);
+              lf_set(m.right_power, self->right_power);
+  
+              float delta = self->current_yaw - self->start_angle;
+  
+              if ((self->target_angle_delta > 0 && delta >= self->target_angle_delta) ||
+                  (self->target_angle_delta < 0 && delta <= self->target_angle_delta)) {
+  
+                  lf_set(m.left_power, 0.0f);
+                  lf_set(m.right_power, 0.0f);
+                  lf_set(d.line0, "Turn done");
+                  lf_set_mode(COMMAND_PARSING);
               }
           =}
       }
   
-      mode DRIVINGDOWN {
-          reaction(tilt.roll) e.left, e.right -> m.left, m.right, m.left_speed, m.right_speed {=
-              lf_set(m.left, e.left->value);
-              lf_set(m.right, e.right->value);
+      // ============================================================
+      // MODE 4: STOP
+      // ============================================================
+      mode STOP {
+          reaction(t) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
   
-              lf_set(m.left_speed, tilt.roll->value * -0.004f + 0.2f);
-              lf_set(m.right_speed, tilt.roll->value * 0.004f + 0.2f);
+              lf_set(m.left_power, 0.0f);
+              lf_set(m.right_power, 0.0f);
+              lf_set(d.line0, "Stopped");
+              lf_set_mode(COMMAND_PARSING);
+          =}
+      }
+  
+      // ============================================================
+      // MODE 5: GOAL
+      // ============================================================
+      mode GOAL {
+          reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
+  
+              if (!self->driving_initialized) {
+                  float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
+                  self->start_ticks = avg;
+                  self->driving_initialized = 1;
+              }
+  
+              lf_set(m.left_power, self->left_power);
+              lf_set(m.right_power, self->right_power);
+  
+              float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
+              float traveled = avg - self->start_ticks;
+  
+              if (traveled >= 1500.0f) {
+                  lf_set(m.left_power, 0.0f);
+                  lf_set(m.right_power, 0.0f);
+                  lf_set(d.line0, "Goal hit");
+                  lf_set_mode(COMMAND_PARSING);
+              }
           =}
       }
   }
+  
