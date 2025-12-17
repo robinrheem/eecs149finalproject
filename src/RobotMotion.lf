@@ -18,6 +18,13 @@ preamble {=
 #include <string.h>
 #include <stdlib.h>
 #include "pico/stdlib.h"
+
+static inline void drain_rx(void) {
+    int c;
+    while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+        (void)c; // discard
+    }
+}
 =}
 
 main reactor {
@@ -119,6 +126,7 @@ main reactor {
                         self->target_ticks = 1000.0f;
                         self->driving_initialized = 0;
 
+                        drain_rx();
                         lf_set_mode(DRIVING);
                         return;
 
@@ -131,6 +139,7 @@ main reactor {
                         self->start_angle = self->current_yaw;
                         self->target_angle_delta = 5.0f;
 
+                        drain_rx();
                         lf_set_mode(TURNING);
                         return;
 
@@ -143,6 +152,7 @@ main reactor {
                         self->start_angle = self->current_yaw;
                         self->target_angle_delta = -5.0f;
 
+                        drain_rx();
                         lf_set_mode(TURNING);
                         return;
 
@@ -152,7 +162,8 @@ main reactor {
                         self->left_power  = 0.3f;
                         self->right_power = 0.3f;
                         self->driving_initialized = 0;
-
+                        
+                        drain_rx();
                         lf_set_mode(GOAL);
                         return;
 
@@ -162,6 +173,7 @@ main reactor {
                         self->left_power  = 0.0f;
                         self->right_power = 0.0f;
 
+                        drain_rx();
                         lf_set_mode(STOP);
                         return;
 
@@ -173,6 +185,10 @@ main reactor {
 
                 } else if (self->idx < self->buf_size - 1) {
                     self->buf[self->idx++] = (char)c;
+                } else {
+                    drain_rx();
+                    self->idx = 0;
+                    self->buf[0] = '\0;
                 }
             }
         =}
@@ -183,6 +199,7 @@ main reactor {
     // ============================================================
     mode DRIVING {
         reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
+            drain_rx();
 
             if (!self->driving_initialized) {
                 float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
@@ -210,6 +227,7 @@ main reactor {
     // ============================================================
     mode TURNING {
         reaction(t) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
+            drain_rx();
 
             lf_set(m.left_power, self->left_power);
             lf_set(m.right_power, self->right_power);
@@ -232,6 +250,7 @@ main reactor {
     // ============================================================
     mode STOP {
         reaction(t) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
+            drain_rx();
 
             lf_set(m.left_power, 0.0f);
             lf_set(m.right_power, 0.0f);
@@ -245,6 +264,7 @@ main reactor {
     // ============================================================
     mode GOAL {
         reaction(t, e.left, e.right) -> reset(COMMAND_PARSING), m.left_power, m.right_power, d.line0 {=
+            drain_rx();
 
             if (!self->driving_initialized) {
                 float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
@@ -258,7 +278,7 @@ main reactor {
             float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
             float traveled = avg - self->start_ticks;
 
-            if (traveled >= 10000.0f) {
+            if (traveled >= 3000.0f) {
                 lf_set(m.left_power, 0.0f);
                 lf_set(m.right_power, 0.0f);
                 lf_set(d.line0, "Goal hit");
