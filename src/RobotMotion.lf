@@ -123,7 +123,7 @@ main reactor {
                         self->left_power  = 0.3f;
                         self->right_power = 0.3f;
 
-                        self->target_ticks = 1000.0f;
+                        self->target_ticks = 500.0f;
                         self->driving_initialized = 0;
 
                         drain_rx();
@@ -137,7 +137,7 @@ main reactor {
                         self->right_power =  0.3f;
 
                         self->start_angle = self->current_yaw;
-                        self->target_angle_delta = 5.0f;
+                        self->target_angle_delta = 1.0f;
 
                         drain_rx();
                         lf_set_mode(TURNING);
@@ -150,7 +150,7 @@ main reactor {
                         self->right_power = -0.3f;
 
                         self->start_angle = self->current_yaw;
-                        self->target_angle_delta = -5.0f;
+                        self->target_angle_delta = -1.0f;
 
                         drain_rx();
                         lf_set_mode(TURNING);
@@ -278,7 +278,7 @@ main reactor {
             float avg = (fabs(e.left->value) + fabs(e.right->value)) / 2.0f;
             float traveled = avg - self->start_ticks;
 
-            if (traveled >= 3000.0f) {
+            if (traveled >= 500.0f) {
                 lf_set(m.left_power, 0.0f);
                 lf_set(m.right_power, 0.0f);
                 lf_set(d.line0, "Goal hit");
