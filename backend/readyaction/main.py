@@ -45,7 +45,12 @@ robot_state = {
     "is_navigating": False,
     "gap_left_class": None,  # Class name of object on left side of gap
     "gap_right_class": None,  # Class name of object on right side of gap
+    "objects_missing_count": 0,  # Counter for consecutive frames with missing objects
+    "goal_reached": False,  # Flag to prevent goal from triggering multiple times
 }
+
+# Number of consecutive frames objects must be missing before declaring goal
+GOAL_FRAME_THRESHOLD = 5
 yolo_model: YOLO = YOLO("yolo11s.pt")
 
 # Global state for identified targets from VLM
@@ -406,6 +411,8 @@ async def analyze_image(
             robot_state["is_navigating"] = False
             robot_state["gap_left_class"] = None
             robot_state["gap_right_class"] = None
+            robot_state["objects_missing_count"] = 0
+            robot_state["goal_reached"] = False
             action = "stop"  # Always stop in identify mode
         elif mode == "detect":
             if target:
@@ -419,14 +426,33 @@ async def analyze_image(
             # If we're navigating, check if initial objects are still present
             if robot_state["is_navigating"]:
                 initial_classes = robot_state["initial_objects"]
-                if not check_initial_objects_present(detections, initial_classes):
-                    # Initial objects no longer detected - goal reached!
-                    action = "goal"
-                    result["navigation_status"] = "goal_reached"
-                    result["reason"] = "Initial objects no longer in view"
-                    # Reset navigation state
-                    robot_state["is_navigating"] = False
+                # Only check for goal if we haven't already reached it and have valid initial objects
+                if not robot_state["goal_reached"] and initial_classes and not check_initial_objects_present(detections, initial_classes):
+                    # Objects not detected this frame - increment counter
+                    robot_state["objects_missing_count"] += 1
+                    print(f"[navigation] Objects missing for {robot_state['objects_missing_count']} consecutive frame(s)")
+                    
+                    if robot_state["objects_missing_count"] >= GOAL_FRAME_THRESHOLD:
+                        # Initial objects confirmed gone for multiple frames - goal reached!
+                        action = "goal"
+                        result["navigation_status"] = "goal_reached"
+                        result["reason"] = f"Initial objects not detected for {GOAL_FRAME_THRESHOLD} consecutive frames"
+                        # Mark goal as reached (prevents triggering again)
+                        robot_state["goal_reached"] = True
+                        robot_state["is_navigating"] = False
+                    else:
+                        # Not enough consecutive frames yet - keep driving but don't declare goal
+                        action = "drive"
+                        result["navigation_status"] = "confirming_goal"
+                        result["reason"] = f"Objects missing, confirming ({robot_state['objects_missing_count']}/{GOAL_FRAME_THRESHOLD})"
+                elif robot_state["goal_reached"]:
+                    # Goal already reached - stop
+                    action = "stop"
+                    result["navigation_status"] = "goal_already_reached"
+                    result["reason"] = "Goal was already reached"
                 else:
+                    # Objects are still present - reset counter
+                    robot_state["objects_missing_count"] = 0
                     # Still navigating - calculate action based on gap
                     gap_info = find_largest_gap(detections)
                     if gap_info:
@@ -472,8 +498,11 @@ async def analyze_image(
                         # Store initial objects for goal detection
                         robot_state["initial_objects"] = list(set(d["class"].lower() for d in detections))
                         robot_state["is_navigating"] = True
+                        robot_state["goal_reached"] = False  # Reset goal flag for new navigation
+                        robot_state["objects_missing_count"] = 0  # Reset counter
                         robot_state["gap_left_class"] = gap_info["left_object"]["class"]
                         robot_state["gap_right_class"] = gap_info["right_object"]["class"]
+                        print(f"[navigation] Started with initial objects: {robot_state['initial_objects']}")
                         action = calculate_navigation_action(gap_info, image_width)
                         result["gap_info"] = {
                             "left_object": gap_info["left_object"]["class"],
@@ -499,6 +528,8 @@ async def analyze_image(
             "initial_objects": robot_state["initial_objects"],
             "gap_left_class": robot_state["gap_left_class"],
             "gap_right_class": robot_state["gap_right_class"],
+            "objects_missing_count": robot_state["objects_missing_count"],
+            "goal_reached": robot_state["goal_reached"],
         }
         # Include original image dimensions for proper bounding box scaling in browser
         # (YOLO runs on original image, browser displays compressed version)
