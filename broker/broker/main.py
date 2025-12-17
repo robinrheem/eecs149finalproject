@@ -50,7 +50,7 @@ def start(
     print(f"[blue]→[/blue] Serial port: {serial_port} @ {baud_rate} baud")
     print(f"[blue]→[/blue] Capture interval: {'max speed' if interval == 0 else f'{interval}ms'}")
     print("[blue]→[/blue] Opening serial port...")
-    ser = serial.Serial(serial_port, baud_rate, timeout=1, write_timeout=0.2)
+    ser = serial.Serial(serial_port, baud_rate, timeout=1, write_timeout=1)
     print("[green]✓[/green] Serial port opened")
     print("[blue]→[/blue] Initializing camera...")
     camera = Picamera2()
@@ -71,6 +71,7 @@ def start(
                         mock_data = ["drive", "turn_left", "turn_right", "stop"]
                         choice = random.choice(mock_data)
                         ser.write(f"{choice}\n".encode())
+                        ser.flush()
                         print(f"[green]✓[/green] Mock data sent: {choice}")
                         if interval_seconds > 0:
                             time.sleep(interval_seconds)
@@ -85,6 +86,7 @@ def start(
                     ).json()
                     action = f"{response['action']}\n"
                     ser.write(action.encode())
+                    ser.flush()
                     print(f"[green]✓[/green] Action: {response['action']}")
                 except Exception as e:
                     print(f"[red]✗[/red] Error: {e}")
