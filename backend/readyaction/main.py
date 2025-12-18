@@ -116,10 +116,7 @@ def compress_image_for_web(image_bytes: bytes) -> bytes:
     _, compressed = cv2.imencode('.jpg', img, encode_params)
     return compressed.tobytes()
 
-SYSTEM_PROMPT = """You are a vision system for a robot car. Analyze the image and provide a brief description of what you see.
-Focus on objects, people, obstacles, and any relevant environmental details that would help the robot navigate or interact with its surroundings."""
-
-IDENTIFY_SYSTEM_PROMPT = """You are a vision system for a robot. Your job is to identify objects in the scene that can be detected by a YOLO model.
+IDENTIFY_SYSTEM_PROMPT = """You are a vision system for a robot. Your job is to identify objects in the scene that can be detected by a YOLO model, and also identify the two objects that have the biggest gap between them.
 
 YOLO can detect these classes: person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, traffic light, fire hydrant, stop sign, parking meter, bench, bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe, backpack, umbrella, handbag, tie, suitcase, frisbee, skis, snowboard, sports ball, kite, baseball bat, baseball glove, skateboard, surfboard, tennis racket, bottle, wine glass, cup, fork, knife, spoon, bowl, banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake, chair, couch, potted plant, bed, dining table, toilet, tv, laptop, mouse, remote, keyboard, cell phone, microwave, oven, toaster, sink, refrigerator, book, clock, vase, scissors, teddy bear, hair drier, toothbrush.
 
@@ -128,7 +125,7 @@ Respond ONLY with a JSON object in this exact format:
 
 Only include objects that are actually visible in the image AND are in the YOLO class list above."""
 
-IDENTIFY_PROMPT = "What objects are in front of me? Identify all visible objects that match YOLO detection classes. Return ONLY valid JSON."
+IDENTIFY_PROMPT = "What objects are in front of me? Identify all visible objects that match YOLO detection classes, and also identify the two objects that have the biggest gap between them. Return ONLY valid JSON."
 
 def detect_objects(image_bytes: bytes, target: str | None = None, conf_threshold: float = 0.5) -> dict:
     """Run YOLO object detection on image using Ultralytics YOLOv8
